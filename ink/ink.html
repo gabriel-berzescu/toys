@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="ro">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Cerneală</title>
+<title>ink</title>
 <style>
   :root{
     --ink-bg:#050507;
@@ -63,24 +63,24 @@
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="hint"><span>trage cu degetul / mouse-ul</span></div>
-<button id="gear" aria-label="Setări">⚙</button>
-<div id="panel" role="dialog" aria-label="Parametri">
-  <div class="ctl"><label>vorticitate <output id="oCurl">30</output></label>
+<div id="hint"><span>drag with your finger / mouse</span></div>
+<button id="gear" aria-label="Settings">⚙</button>
+<div id="panel" role="dialog" aria-label="Parameters">
+  <div class="ctl"><label>vorticity <output id="oCurl">30</output></label>
     <input type="range" id="rCurl" min="0" max="50" step="1" value="30"></div>
-  <div class="ctl"><label>disipare <output id="oDiss">0.985</output></label>
+  <div class="ctl"><label>dissipation <output id="oDiss">0.985</output></label>
     <input type="range" id="rDiss" min="0.90" max="1.00" step="0.001" value="0.985"></div>
-  <div class="ctl"><label>vâscozitate <output id="oVisc">0.5</output></label>
+  <div class="ctl"><label>viscosity <output id="oVisc">0.5</output></label>
     <input type="range" id="rVisc" min="0" max="5" step="0.1" value="0.5"></div>
-  <div class="ctl"><label>pensulă <output id="oBrush">1.0</output></label>
+  <div class="ctl"><label>brush <output id="oBrush">1.0</output></label>
     <input type="range" id="rBrush" min="0.2" max="3.0" step="0.1" value="1.0"></div>
-  <button id="reset">golește ecranul</button>
+  <button id="reset">clear screen</button>
 </div>
-<div id="nogl">Browserul acesta nu suportă WebGL cu texturi half-float.<br>Încearcă un browser mai recent.</div>
+<div id="nogl">This browser doesn't support WebGL with half-float textures.<br>Try a newer browser.</div>
 
 <script>
 'use strict';
-/* ============ Cerneală — stable fluids (Stam 1999) pe GPU ============ */
+/* ============ Ink — stable fluids (Stam 1999) on the GPU ============ */
 
 const params = { curl:30, dissipation:0.985, viscosity:0.5, brush:1.0 };
 
@@ -90,7 +90,7 @@ const SIM_RES = isMobile ? 256 : 512;
 const DYE_RES = isMobile ? 512 : 1024;
 const PRESSURE_ITERS = 35, VISC_ITERS = 20;
 
-/* ---------- context + extensii ---------- */
+/* ---------- context + extensions ---------- */
 let gl = canvas.getContext('webgl2', {alpha:false, depth:false, stencil:false, antialias:false});
 let isGL2 = !!gl;
 if (!gl) gl = canvas.getContext('webgl', {alpha:false, depth:false, stencil:false, antialias:false});
@@ -100,7 +100,7 @@ let halfType, canLinear;
 if (isGL2) {
   const cbf = gl.getExtension('EXT_color_buffer_float');
   if (!cbf) { fail(); throw new Error('no color buffer float'); }
-  canLinear = !!gl.getExtension('OES_texture_float_linear') || true; /* half-float linear e nativ în GL2 */
+  canLinear = !!gl.getExtension('OES_texture_float_linear') || true; /* half-float linear is native in GL2 */
   halfType = gl.HALF_FLOAT;
 } else {
   const ext = gl.getExtension('OES_texture_half_float');
@@ -113,7 +113,7 @@ function fail(){ document.getElementById('nogl').style.display='flex';
 
 const FILTER = canLinear ? gl.LINEAR : gl.NEAREST;
 
-/* formate: în GL2 texturi sized; în GL1, RGBA half float peste tot */
+/* formats: sized textures in GL2; RGBA half float everywhere in GL1 */
 function fmt(components){
   if (!isGL2) return {internal: gl.RGBA, format: gl.RGBA};
   switch(components){
@@ -123,7 +123,7 @@ function fmt(components){
   }
 }
 
-/* ---------- shadere ---------- */
+/* ---------- shaders ---------- */
 const VERT = `
 precision highp float;
 attribute vec2 aPos;
@@ -229,7 +229,7 @@ void main(){
 display:`precision highp float;varying vec2 vUv;uniform sampler2D uTex;
 void main(){
   vec3 c=texture2D(uTex,vUv).rgb;
-  c=c/(1.0+c*0.15);            /* soft rolloff, păstrează glow-ul */
+  c=c/(1.0+c*0.15);            /* soft rolloff, preserves the glow */
   gl_FragColor=vec4(c,1.0);
 }`
 };
@@ -253,7 +253,7 @@ function program(fragSrc){
 }
 const progs={}; for(const k in FRAG) progs[k]=program(FRAG[k]);
 
-/* ---------- geometrie fullscreen ---------- */
+/* ---------- fullscreen geometry ---------- */
 const buf=gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER,buf);
 gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
@@ -265,7 +265,7 @@ function blit(target){
   gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
 }
 
-/* ---------- FBO-uri ---------- */
+/* ---------- FBOs ---------- */
 function createFBO(w,h,components){
   const f=fmt(components);
   const tex=gl.createTexture();
@@ -310,7 +310,7 @@ function resize(){
   const w=Math.round(innerWidth*dpr), h=Math.round(innerHeight*dpr);
   if(canvas.width!==w||canvas.height!==h){
     canvas.width=w; canvas.height=h;
-    initFields();          /* spec v0.1: reset la resize e acceptabil */
+    initFields();          /* spec v0.1: reset on resize is acceptable */
   }
 }
 addEventListener('resize',resize);
@@ -338,13 +338,13 @@ canvas.addEventListener('pointermove',e=>{
 });
 function endPointer(e){
   const p=pointers.get(e.pointerId);
-  if(p && !p.moved) puff(p.downX,p.downY,p.hue);   /* click simplu → puf radial */
+  if(p && !p.moved) puff(p.downX,p.downY,p.hue);   /* simple click → radial puff */
   pointers.delete(e.pointerId);
 }
 canvas.addEventListener('pointerup',endPointer);
 canvas.addEventListener('pointercancel',endPointer);
 
-/* cursor ascuns după 2s de inactivitate */
+/* cursor hidden after 2s of inactivity */
 let cursorTimer;
 function wake(){
   canvas.classList.remove('nocursor');
@@ -353,7 +353,7 @@ function wake(){
 }
 wake();
 
-/* ---------- splat-uri ---------- */
+/* ---------- splats ---------- */
 function hsv(h,s,v){
   const f=(n,k=(n+h/60)%6)=>v-v*s*Math.max(Math.min(k,4-k,1),0);
   return [f(5),f(3),f(1)];
@@ -382,12 +382,12 @@ function puff(x,y,hue){
   }
 }
 
-/* ---------- pași solver ---------- */
+/* ---------- solver steps ---------- */
 function step(dt){
   gl.disable(gl.BLEND);
   const tx=velocity.texel;
 
-  /* splat-uri din pointeri activi */
+  /* splats from active pointers */
   for(const p of pointers.values()){
     if(p.moved && (p.dx||p.dy)){
       splat(p.x,p.y,p.dx*5500,p.dy*5500,hsv(p.hue,0.9,1),1.0);
@@ -410,7 +410,7 @@ function step(dt){
   gl.uniform1f(progs.vorticity.u.dt,dt);
   blit(velocity.write); velocity.swap();
 
-  /* vâscozitate (Jacobi) — skip la 0 */
+  /* viscosity (Jacobi) — skip at 0 */
   if(params.viscosity>0.001){
     const alpha=1/(params.viscosity*dt), rBeta=1/(4+alpha);
     progs.jacobiVisc.bind();
@@ -423,13 +423,13 @@ function step(dt){
     }
   }
 
-  /* divergență */
+  /* divergence */
   progs.divergence.bind();
   gl.uniform2f(progs.divergence.u.texelSize,tx[0],tx[1]);
   gl.uniform1i(progs.divergence.u.uVelocity,velocity.read.attach(0));
   blit(divergence);
 
-  /* presiune: atenuare + Jacobi */
+  /* pressure: damping + Jacobi */
   progs.clear.bind();
   gl.uniform2f(progs.clear.u.texelSize,tx[0],tx[1]);
   gl.uniform1i(progs.clear.u.uTex,pressure.read.attach(0));
@@ -444,14 +444,14 @@ function step(dt){
     blit(pressure.write); pressure.swap();
   }
 
-  /* proiecție */
+  /* projection */
   progs.gradSub.bind();
   gl.uniform2f(progs.gradSub.u.texelSize,tx[0],tx[1]);
   gl.uniform1i(progs.gradSub.u.uPressure,pressure.read.attach(0));
   gl.uniform1i(progs.gradSub.u.uVelocity,velocity.read.attach(1));
   blit(velocity.write); velocity.swap();
 
-  /* advecție velocity */
+  /* velocity advection */
   progs.advect.bind();
   gl.uniform2f(progs.advect.u.texelSize,tx[0],tx[1]);
   gl.uniform2f(progs.advect.u.sourceTexelSize,tx[0],tx[1]);
@@ -462,7 +462,7 @@ function step(dt){
   gl.uniform1i(progs.advect.u.uSource,velocity.read.attach(0));
   blit(velocity.write); velocity.swap();
 
-  /* advecție dye + disipare */
+  /* dye advection + dissipation */
   gl.uniform2f(progs.advect.u.sourceTexelSize,dye.texel[0],dye.texel[1]);
   gl.uniform1f(progs.advect.u.dissipation,params.dissipation);
   gl.uniform1i(progs.advect.u.uVelocity,velocity.read.attach(0));
@@ -477,7 +477,7 @@ function render(){
   blit(null);
 }
 
-/* ---------- buclă ---------- */
+/* ---------- loop ---------- */
 let last=performance.now(), running=true;
 function frame(now){
   if(running){
