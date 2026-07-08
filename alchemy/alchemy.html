@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>alchemy.py</title>
+<style>
+  :root{
+    --bg:#050507;
+    --panel:#101014cc;
+    --line:#ffffff1f;
+    --text:#e8e6f0;
+    --dim:#9a97a8;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden;background:var(--bg);
+    font-family:ui-monospace,'Cascadia Code','JetBrains Mono',Menlo,monospace;
+    color:var(--text);-webkit-user-select:none;user-select:none}
+  #c{position:fixed;inset:0;width:100%;height:100%;touch-action:none;display:block}
+  #c.nocursor{cursor:none}
+
+  /* hint */
+  #hint{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    pointer-events:none;letter-spacing:.35em;font-size:13px;color:var(--dim);
+    text-transform:lowercase;transition:opacity 1.2s ease}
+  #hint.gone{opacity:0}
+  @media (prefers-reduced-motion:no-preference){
+    #hint span{animation:breathe 3.2s ease-in-out infinite}
+    @keyframes breathe{0%,100%{opacity:.45}50%{opacity:.95}}
+  }
+
+  /* settings button */
+  #gear{position:fixed;right:14px;bottom:14px;width:38px;height:38px;border:1px solid var(--line);
+    border-radius:50%;background:var(--panel);backdrop-filter:blur(8px);color:var(--dim);
+    font-size:16px;line-height:1;cursor:pointer;transition:color .2s,transform .3s}
+  #gear:hover{color:var(--text);transform:rotate(40deg)}
+  #gear:focus-visible{outline:2px solid var(--text);outline-offset:2px}
+
+  /* panel */
+  #panel{position:fixed;right:14px;bottom:62px;width:240px;padding:16px 16px 12px;
+    background:var(--panel);backdrop-filter:blur(12px);border:1px solid var(--line);
+    border-radius:12px;display:none;flex-direction:column;gap:12px}
+  #panel.open{display:flex}
+  .ctl label{display:flex;justify-content:space-between;font-size:11px;color:var(--dim);
+    letter-spacing:.12em;text-transform:lowercase;margin-bottom:5px}
+  .ctl output{color:var(--text)}
+  input[type=range]{width:100%;height:18px;appearance:none;-webkit-appearance:none;background:transparent;cursor:pointer}
+  input[type=range]::-webkit-slider-runnable-track{height:2px;background:var(--line)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;
+    background:var(--text);margin-top:-5px}
+  input[type=range]::-moz-range-track{height:2px;background:var(--line)}
+  input[type=range]::-moz-range-thumb{width:12px;height:12px;border:none;border-radius:50%;background:var(--text)}
+  input[type=range]:focus-visible{outline:2px solid var(--text);outline-offset:4px}
+  #reset{margin-top:2px;padding:8px;border:1px solid var(--line);border-radius:8px;background:transparent;
+    color:var(--dim);font:inherit;font-size:11px;letter-spacing:.2em;text-transform:lowercase;cursor:pointer;
+    transition:color .2s,border-color .2s}
+  #reset:hover{color:var(--text);border-color:var(--text)}
+  #reset:focus-visible{outline:2px solid var(--text);outline-offset:2px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint"><span>drag with your finger / mouse</span></div>
+<button id="gear" aria-label="Settings">⚙</button>
+<div id="panel" role="dialog" aria-label="Parameters">
+  <div class="ctl"><label>flow <output id="oFlow">55</output></label>
+    <input type="range" id="rFlow" min="0" max="100" step="1" value="55"></div>
+  <div class="ctl"><label>lifespan <output id="oLife">6.0</output></label>
+    <input type="range" id="rLife" min="2" max="12" step="0.5" value="6"></div>
+  <div class="ctl"><label>density <output id="oDens">1.0</output></label>
+    <input type="range" id="rDens" min="0.2" max="3" step="0.1" value="1"></div>
+  <div class="ctl"><label>size <output id="oSize">1.0</output></label>
+    <input type="range" id="rSize" min="0.5" max="2" step="0.1" value="1"></div>
+  <button id="reset">clear screen</button>
+</div>
+
+<script>
+'use strict';
+/* ============ alchemy.py — glyph transmutation over a curl-noise field ============ */
+
+const params = { flow:55, lifespan:6, density:1.0, size:1.0 };
+
+const canvas=document.getElementById('c');
+const ctx=canvas.getContext('2d',{alpha:false});
+const isMobile=/Mobi|Android/i.test(navigator.userAgent);
+const MAXP=isMobile?180:380;
+const DPR=Math.min(devicePixelRatio||1,2);
+const MONO="ui-monospace,'Cascadia Code','JetBrains Mono',Menlo,monospace";
+
+let W=innerWidth,H=innerHeight;
+function resize(){
+  W=innerWidth;H=innerHeight;
+  canvas.width=Math.round(W*DPR);
+  canvas.height=Math.round(H*DPR);
+}
+addEventListener('resize',resize);
+resize();
+
+/* ---------- perlin noise → divergence-free curl field ---------- */
+const perm=new Uint8Array(512);
+{
+  const p=new Uint8Array(256);
+  for(let i=0;i<256;i++)p[i]=i;
+  let s=1337;
+  const rnd=()=>(s=(s*16807)%2147483647)/2147483647;
+  for(let i=255;i>0;i--){const j=(rnd()*(i+1))|0;const t=p[i];p[i]=p[j];p[j]=t;}
+  for(let i=0;i<512;i++)perm[i]=p[i&255];
+}
+function fade(t){return t*t*t*(t*(t*6-15)+10);}
+function grad(h,x,y){
+  switch(h&7){
+    case 0:return x+y; case 1:return x-y; case 2:return -x+y; case 3:return -x-y;
+    case 4:return x;   case 5:return -x;  case 6:return y;    default:return -y;
+  }
+}
+function noise2(x,y){
+  const X=Math.floor(x),Y=Math.floor(y);
+  const xf=x-X,yf=y-Y;
+  const Xi=X&255,Yi=Y&255;
+  const u=fade(xf),v=fade(yf);
+  const a=perm[Xi]+Yi,b=perm[Xi+1]+Yi;
+  const n00=grad(perm[a],xf,yf),    n10=grad(perm[b],xf-1,yf);
+  const n01=grad(perm[a+1],xf,yf-1),n11=grad(perm[b+1],xf-1,yf-1);
+  const nx0=n00+(n10-n00)*u, nx1=n01+(n11-n01)*u;
+  return nx0+(nx1-nx0)*v;
+}
+const FIELD=1/240;
+let tf1=0,tf2=0;
+function curl(x,y){
+  const e=3,inv=1/(2*e*FIELD);
+  const n1=noise2(x*FIELD+tf1,(y+e)*FIELD+tf2);
+  const n2=noise2(x*FIELD+tf1,(y-e)*FIELD+tf2);
+  const n3=noise2((x+e)*FIELD+tf1,y*FIELD+tf2);
+  const n4=noise2((x-e)*FIELD+tf1,y*FIELD+tf2);
+  return [(n1-n2)*inv,(n4-n3)*inv];
+}
+
+/* ---------- the material: alchemical symbols + python ---------- */
+const CORE_SYMS=['☉','☽','☿','♀︎','♂︎','♃','♄','⊕','⚗︎','✶','△','▽'];
+const FANCY_SYMS=['🜀','🜁','🜂','🜃','🜄','🜇','🜈','🜊','🜍','🜔','🜖','🜚','🜛','🜺'];
+let SYMS=[];
+{
+  /* keep only glyphs this system can actually render (tofu detection) */
+  const t=document.createElement('canvas');t.width=t.height=32;
+  const c=t.getContext('2d',{willReadFrequently:true});
+  const sig=s=>{
+    c.clearRect(0,0,32,32);
+    c.font='26px '+MONO;c.textAlign='center';c.textBaseline='middle';c.fillStyle='#fff';
+    c.fillText(s,16,16);
+    const d=c.getImageData(0,0,32,32).data;
+    let n=0,h=0;
+    for(let i=3;i<d.length;i+=4)if(d[i]>16){n++;h=(h*33+(i>>2))>>>0;}
+    return n+'#'+h;
+  };
+  const tofu=sig('͸');
+  const ok=ch=>{const s=sig(ch);return s!==tofu&&s[0]!=='0';};
+  SYMS=CORE_SYMS.filter(ok).concat(FANCY_SYMS.filter(ok));
+  if(!SYMS.length)SYMS=['✶','△','▽'];
+}
+
+const CODE=[
+  'def transmute(lead):','return gold','yield essence','import ether',
+  'from chaos import order','while moon.waxes:','self.anima += 1',
+  'sol, luna = luna, sol','with crucible as c:','try: dissolve(ego)',
+  'except Hubris: pass','assert aurum is not None','for star in heavens:',
+  'spirit = matter ** -1','raise Phoenix()','azoth = ...',
+  'if luna.is_full():','lambda m: m.spirit','magnum_opus.begin()'
+];
+const FUSE_FNS=['distill','calcine','sublimate','coagulate','dissolve',
+  'transmute','ferment','purify','conjure','bind','project','ignite'];
+
+function pick(a){return a[(Math.random()*a.length)|0];}
+function mixText(){
+  const s=pick(SYMS),r=Math.random();
+  if(r<0.45)return pick(FUSE_FNS)+'('+s+')';
+  if(r<0.60)return 'yield '+s;
+  if(r<0.72)return 'return '+s;
+  if(r<0.84)return 'lambda '+s+': gold';
+  if(r<0.94)return 'conjoin('+s+', '+pick(SYMS)+')';
+  return s+' = '+pick(FUSE_FNS)+'('+pick(SYMS)+')';
+}
+
+/* ---------- baked glow sprites ---------- */
+const KINDS={
+  sym:{px:40,core:'#ffedbe',glow:'#f0a32f'},
+  code:{px:17,core:'#dcfff1',glow:'#37d9a0'},
+  mix:{px:19,core:'#f4e9ff',glow:'#a86fe0'}
+};
+const spriteCache=new Map();
+function sprite(text,kind){
+  const key=kind+'|'+text;
+  const hit=spriteCache.get(key);
+  if(hit)return hit;
+  const k=KINDS[kind],px=k.px*DPR;
+  const mc=document.createElement('canvas');
+  const c=mc.getContext('2d');
+  c.font=px+'px '+MONO;
+  const w=Math.ceil(c.measureText(text).width+px*1.8);
+  const h=Math.ceil(px*3.2);
+  mc.width=w;mc.height=h;
+  c.font=px+'px '+MONO;c.textAlign='center';c.textBaseline='middle';
+  c.shadowColor=k.glow;c.shadowBlur=px*0.55;c.fillStyle=k.glow;
+  c.fillText(text,w/2,h/2);
+  c.fillText(text,w/2,h/2);
+  c.shadowBlur=px*0.16;c.fillStyle=k.core;
+  c.fillText(text,w/2,h/2);
+  const s={c:mc,w:w/DPR,h:h/DPR};
+  spriteCache.set(key,s);
+  return s;
+}
+function dotSprite(color){
+  const r=14*DPR,mc=document.createElement('canvas');
+  mc.width=mc.height=r*2;
+  const c=mc.getContext('2d');
+  const g=c.createRadialGradient(r,r,0,r,r,r);
+  g.addColorStop(0,color);g.addColorStop(1,'rgba(0,0,0,0)');
+  c.fillStyle=g;c.fillRect(0,0,r*2,r*2);
+  return {c:mc};
+}
+const dotGold=dotSprite('rgba(255,214,140,1)');
+const dotTeal=dotSprite('rgba(140,240,210,1)');
+const dotViolet=dotSprite('rgba(220,180,255,1)');
+
+/* ---------- state ---------- */
+const parts=[],sparks=[],rings=[];
+const motes=[];
+{
+  const n=isMobile?26:44;
+  for(let i=0;i<n;i++)motes.push({
+    x:Math.random()*W,y:Math.random()*H,
+    r:6+Math.random()*10,
+    a:0.05+Math.random()*0.07,
+    seed:Math.random()*6.28,
+    d:Math.random()<0.5?dotGold:dotTeal
+  });
+}
+
+/* adaptive budget: no GPU / weak machine → fewer glyphs instead of a slideshow */
+let fpsEMA=60;
+function partCap(){return fpsEMA<24?(MAXP*0.45)|0:MAXP;}
+
+function addPart(x,y,vx,vy,kind,text){
+  const cap=partCap();
+  if(parts.length>=cap){
+    /* over budget: hasten the oldest that isn't already fading */
+    for(const q of parts){if(q.life>q.age+0.95){q.life=q.age+0.7+Math.random()*0.25;break;}}
+    if(parts.length>cap+60)parts.shift();
+  }
+  const p={
+    x,y,vx,vy,kind,text,
+    spr:sprite(text,kind),
+    age:0,
+    life:params.lifespan*(0.7+Math.random()*0.55),
+    rot:kind==='sym'?(Math.random()-0.5)*0.8:0,
+    vrot:kind==='sym'?(Math.random()-0.5)*1.1:0,
+    tilt:(Math.random()-0.5)*0.1,
+    seed:Math.random()*6.28,
+    sc:0.75+Math.random()*0.55,
+    base:0.7+Math.random()*0.3
+  };
+  parts.push(p);
+  return p;
+}
+function spawn(x,y,vx,vy,kindForce){
+  let kind=kindForce;
+  if(!kind){
+    const r=Math.random();
+    kind=r<0.45?'sym':r<0.85?'code':'mix';
+  }
+  const text=kind==='sym'?pick(SYMS):kind==='code'?pick(CODE):mixText();
+  return addPart(x,y,vx,vy,kind,text);
+}
+
+/* ---------- input (pointer events) ---------- */
+const pointers=new Map();
+let interacted=false;
+canvas.addEventListener('pointerdown',e=>{
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId,{x:e.clientX,y:e.clientY,acc:0,moved:false,
+    downX:e.clientX,downY:e.clientY,lt:performance.now()});
+  if(!interacted){interacted=true;document.getElementById('hint').classList.add('gone');}
+});
+canvas.addEventListener('pointermove',e=>{
+  const p=pointers.get(e.pointerId);if(!p)return;
+  const nx=e.clientX,ny=e.clientY;
+  const dx=nx-p.x,dy=ny-p.y;
+  const d=Math.hypot(dx,dy);
+  if(d<0.5)return;
+  const now=performance.now();
+  const dtm=Math.max((now-p.lt)/1000,0.008);p.lt=now;
+  if(d>2)p.moved=true;
+  const spd=Math.min(d/dtm,1600);
+  const ux=dx/d,uy=dy/d;
+  p.acc+=d;
+  const spacing=30/params.density;
+  if(p.acc>=spacing){
+    const n=Math.min(Math.floor(p.acc/spacing),6);
+    for(let i=0;i<n;i++){
+      const t=(i+1)/n;
+      spawn(p.x+dx*t+(Math.random()-0.5)*16,
+            p.y+dy*t+(Math.random()-0.5)*16,
+            ux*spd*0.35+(Math.random()-0.5)*50,
+            uy*spd*0.35+(Math.random()-0.5)*50);
+    }
+    p.acc%=spacing;
+  }
+  p.x=nx;p.y=ny;
+  wake();
+});
+function endPointer(e){
+  const p=pointers.get(e.pointerId);
+  if(p&&!p.moved)burst(p.downX,p.downY);   /* simple click → radial burst */
+  pointers.delete(e.pointerId);
+}
+canvas.addEventListener('pointerup',endPointer);
+canvas.addEventListener('pointercancel',endPointer);
+
+/* cursor hidden after 2s of inactivity */
+let cursorTimer;
+function wake(){
+  canvas.classList.remove('nocursor');
+  clearTimeout(cursorTimer);
+  cursorTimer=setTimeout(()=>canvas.classList.add('nocursor'),2000);
+}
+wake();
+
+function burst(x,y){
+  const N=12;
+  for(let i=0;i<N;i++){
+    const a=(i/N)*6.2832+Math.random()*0.35;
+    const sp=110+Math.random()*130;
+    spawn(x+Math.cos(a)*10,y+Math.sin(a)*10,
+          Math.cos(a)*sp,Math.sin(a)*sp,
+          Math.random()<0.72?'sym':'code');
+  }
+  rings.push({x,y,r:6,vr:280,a:0.45,col:'240,175,80'});
+}
+
+/* ---------- transmutation: code drifts into a symbol → fused glyph ---------- */
+let lastFuse=0;
+function tryFuse(t){
+  if(t-lastFuse<0.45)return;
+  for(const a of parts){
+    if(a.kind!=='code'||a.age<0.35||a.age>a.life-0.9)continue;
+    for(const b of parts){
+      if(b.kind!=='sym'||b.age<0.35||b.age>b.life-0.9)continue;
+      const dx=a.x-b.x,dy=a.y-b.y;
+      if(dx*dx+dy*dy<676){fuse(a,b);lastFuse=t;return;}
+    }
+  }
+}
+function fuse(a,b){
+  a.dead=true;b.dead=true;
+  const x=(a.x+b.x)/2,y=(a.y+b.y)/2;
+  const p=addPart(x,y,(a.vx+b.vx)/2,(a.vy+b.vy)/2,'mix',pick(FUSE_FNS)+'('+b.text+')');
+  p.life=Math.max(p.life,params.lifespan);
+  rings.push({x,y,r:4,vr:200,a:0.6,col:'190,140,255'});
+  for(let i=0;i<8;i++){
+    const an=Math.random()*6.2832,sp=50+Math.random()*100;
+    sparks.push({x,y,vx:Math.cos(an)*sp,vy:Math.sin(an)*sp,age:0,
+      life:0.45+Math.random()*0.35,d:Math.random()<0.5?dotGold:dotViolet});
+  }
+}
+
+/* ---------- update ---------- */
+let frameN=0;
+function step(dt,t){
+  tf1+=dt*0.045;tf2+=dt*0.038;
+  const drive=params.flow*4.2;
+  const damp=Math.exp(-1.1*dt);
+  for(const p of parts){
+    p.age+=dt;
+    if(p.age>=p.life){p.dead=true;continue;}
+    const cv=curl(p.x,p.y);
+    p.vx=(p.vx+cv[0]*drive*dt)*damp;
+    p.vy=(p.vy+cv[1]*drive*dt)*damp;
+    p.x+=p.vx*dt;p.y+=p.vy*dt;
+    p.rot+=p.vrot*dt;
+  }
+  for(let i=parts.length-1;i>=0;i--)if(parts[i].dead)parts.splice(i,1);
+
+  for(const s of sparks){
+    s.age+=dt;s.x+=s.vx*dt;s.y+=s.vy*dt;
+    s.vx*=damp;s.vy*=damp;
+  }
+  for(let i=sparks.length-1;i>=0;i--)if(sparks[i].age>=sparks[i].life)sparks.splice(i,1);
+
+  for(const r of rings){r.r+=r.vr*dt;r.vr*=Math.exp(-1.6*dt);r.a*=Math.exp(-3.0*dt);}
+  for(let i=rings.length-1;i>=0;i--)if(rings[i].a<0.02)rings.splice(i,1);
+
+  for(const m of motes){
+    const cv=curl(m.x,m.y);
+    m.x+=cv[0]*14*dt;m.y+=cv[1]*14*dt;
+    if(m.x<-10)m.x+=W+20;if(m.x>W+10)m.x-=W+20;
+    if(m.y<-10)m.y+=H+20;if(m.y>H+10)m.y-=H+20;
+  }
+
+  if((frameN++%3)===0)tryFuse(t);
+}
+
+/* ---------- draw ---------- */
+function draw(t){
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.globalCompositeOperation='source-over';
+  ctx.globalAlpha=1;
+  ctx.fillStyle='#050507';
+  ctx.fillRect(0,0,W,H);
+  ctx.globalCompositeOperation='lighter';
+
+  for(const m of motes){
+    ctx.globalAlpha=m.a*(0.7+0.3*Math.sin(t*0.7+m.seed));
+    ctx.drawImage(m.d.c,m.x-m.r/2,m.y-m.r/2,m.r,m.r);
+  }
+
+  ctx.lineWidth=1.3;
+  for(const r of rings){
+    ctx.globalAlpha=1;
+    ctx.strokeStyle='rgba('+r.col+','+r.a.toFixed(3)+')';
+    ctx.beginPath();ctx.arc(r.x,r.y,r.r,0,6.2832);ctx.stroke();
+  }
+
+  for(const s of sparks){
+    const u=s.age/s.life;
+    ctx.globalAlpha=(1-u)*0.8;
+    const sz=10*(1-u*0.5);
+    ctx.drawImage(s.d.c,s.x-sz/2,s.y-sz/2,sz,sz);
+  }
+
+  for(const p of parts){
+    const u=p.age/p.life;
+    const a=p.base*Math.min(p.age/0.25,1)*(u>0.68?1-(u-0.68)/0.32:1);
+    if(a<=0.003)continue;
+    const s=p.sc*params.size*(0.92+0.2*u);
+    const rot=p.kind==='sym'?p.rot:p.tilt+Math.sin(t*0.9+p.seed)*0.05;
+    const fast=p.vx*p.vx+p.vy*p.vy>2500&&fpsEMA>=24;
+    if(fast){ /* comet ghost while moving fast */
+      ctx.setTransform(DPR,0,0,DPR,0,0);
+      ctx.translate(p.x-p.vx*0.05,p.y-p.vy*0.05);
+      ctx.rotate(rot);ctx.scale(s,s);
+      ctx.globalAlpha=a*0.28;
+      ctx.drawImage(p.spr.c,-p.spr.w/2,-p.spr.h/2,p.spr.w,p.spr.h);
+    }
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+    ctx.translate(p.x,p.y);
+    ctx.rotate(rot);ctx.scale(s,s);
+    ctx.globalAlpha=a;
+    ctx.drawImage(p.spr.c,-p.spr.w/2,-p.spr.h/2,p.spr.w,p.spr.h);
+  }
+
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.globalAlpha=1;
+  ctx.globalCompositeOperation='source-over';
+}
+
+/* ---------- loop ---------- */
+let last=performance.now(),running=true;
+function frame(now){
+  requestAnimationFrame(frame);
+  if(!running){last=now;return;}
+  const raw=(now-last)/1000;
+  if(raw>0)fpsEMA+=(Math.min(1/raw,120)-fpsEMA)*0.05;
+  const dt=Math.min(raw,1/30);
+  last=now;
+  const t=now/1000;
+  step(dt,t);
+  draw(t);
+}
+requestAnimationFrame(frame);
+document.addEventListener('visibilitychange',()=>{running=!document.hidden;last=performance.now();});
+
+/* ---------- UI ---------- */
+const panel=document.getElementById('panel'),gear=document.getElementById('gear');
+gear.addEventListener('click',e=>{e.stopPropagation();panel.classList.toggle('open');});
+document.addEventListener('pointerdown',e=>{
+  if(panel.classList.contains('open')&&!panel.contains(e.target)&&e.target!==gear)
+    panel.classList.remove('open');
+});
+panel.addEventListener('pointerdown',e=>e.stopPropagation());
+
+function bindSlider(id,out,key,fmtFn){
+  const el=document.getElementById(id),o=document.getElementById(out);
+  el.addEventListener('input',()=>{params[key]=parseFloat(el.value);o.textContent=fmtFn(params[key]);});
+}
+bindSlider('rFlow','oFlow','flow',v=>v.toFixed(0));
+bindSlider('rLife','oLife','lifespan',v=>v.toFixed(1));
+bindSlider('rDens','oDens','density',v=>v.toFixed(1));
+bindSlider('rSize','oSize','size',v=>v.toFixed(1));
+document.getElementById('reset').addEventListener('click',()=>{
+  parts.length=0;sparks.length=0;rings.length=0;
+});
+</script>
+</body>
+</html>
