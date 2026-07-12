@@ -5,7 +5,7 @@ description: How to build/launch/drive this repo's toys for runtime verification
 
 # Verifying the toys
 
-Static site, no build step. Every toy is a self-contained HTML file (`ink/ink.html`, `alchemy/alchemy.html`, `murmuration/murmuration.html`, `accretion/accretion.html`) linked from `index.html`. Murmuration and accretion each vendor Three.js next to themselves (`three.module.min.js` + `three.core.min.js` — the min build imports the core file; both must be present).
+Static site, no build step. Every toy is a self-contained HTML file (`ink/ink.html`, `alchemy/alchemy.html`, `murmuration/murmuration.html`, `accretion/accretion.html`, `poise/poise.html`) linked from `index.html`. Murmuration, accretion and poise each vendor Three.js next to themselves (`three.module.min.js` + `three.core.min.js` — the min build imports the core file; both must be present); poise additionally vendors the Rapier physics engine (`rapier.es.js`, wasm inlined as base64, Apache-2.0 text in `rapier-LICENSE.txt`).
 
 ## Launch
 
@@ -24,7 +24,7 @@ chromium.launch({
 })
 ```
 
-WebGL (ink), Canvas2D (alchemy), and Three.js/WebGL2 (murmuration, accretion) all work under SwiftShader.
+WebGL (ink), Canvas2D (alchemy), and Three.js/WebGL2 (murmuration, accretion, poise — the latter also runs Rapier's wasm) all work under SwiftShader.
 
 ## Drive
 
@@ -34,6 +34,7 @@ WebGL (ink), Canvas2D (alchemy), and Three.js/WebGL2 (murmuration, accretion) al
 - Settings: `#gear` opens `#panel`; any canvas pointerdown closes it (by design — reopen before touching sliders). Sliders need a manual `input` event after `fill`.
 - Fusion probe (alchemy): scribble tight circles in one spot for a few seconds, then watch for `rings.some(r => r.col === '190,140,255')`.
 - Murmuration is a module script, so nothing is a global lexical binding; its hatch is `window.murm` (`params`, `pos`/`vel` typed arrays, `centroid`, `pred`, getters `fpsEMA`/`budget`/`active`/`strike`/`predW`, `reseed()`). Wait for `window.murm && murm.active > 0`, assert motion by sampling `pos` twice, click to see `strike` jump to 1 then decay, and `predW` rise after `pointermove`.
+- Poise (module script) is a Rapier joint-physics mobile; its hatch is `window.poise` (`seed`, `world`, `recs` (all rigid bodies, interpolation records), `leaves`, getters `fpsEMA`/`ambient`, `maxVel()` (max linear+angular speed across bodies), `kick(s)` (flick a leaf), `screenPoint(i)` (leaf i in CSS px, for aiming drags), `rehang(seed?)`). `?seed=N` pins the sculpture; wait for `window.poise && poise.ready`. Assert: under `emulateMedia({reducedMotion:'reduce'})` `poise.ambient === 0`, it spawns at rest and `maxVel()` stays ≤ ~0.05 (the computed torque balance is a true equilibrium); `kick()` then expect `maxVel()` back under 0.04 in 20–40 s; drag via `screenPoint(i)` + `mouse.down/move` displaces that leaf ~a metre and the release ring-down decays; a ≥ 2 s `mouse.down` hold on empty space raises `maxVel()` (the breath). `#rehang` swaps in a new seed with console staying clean.
 - Accretion (also a module script) renders everything in one fragment shader; its hatch is `window.hole` (`params`, `view` `{theta, phi, dist}`, `uniforms`, getters `fpsEMA`/`resScale`/`frames`/`swirlT`, and `setScale(s)` which pins the internal render scale and disables auto-adaptation until reload). Wait for `window.hole && hole.frames > 3`. Assert: drag changes `view.theta/phi`, wheel shrinks `view.dist` (clamped to [2.05, 40]), sliders drive `params` and uniforms follow on the next frame. A solid-black canvas plus console shader warnings means the fragment shader failed to compile.
 
 ## Gotchas
