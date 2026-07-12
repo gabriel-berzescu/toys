@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>accretion</title>
+<style>
+  :root{
+    --bg:#050507;
+    --panel:#101014cc;
+    --line:#ffffff1f;
+    --text:#e8e6f0;
+    --dim:#9a97a8;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden;background:var(--bg);
+    font-family:ui-monospace,'Cascadia Code','JetBrains Mono',Menlo,monospace;
+    color:var(--text);-webkit-user-select:none;user-select:none}
+  #c{position:fixed;inset:0;width:100%;height:100%;touch-action:none;display:block;cursor:grab}
+  #c:active{cursor:grabbing}
+
+  #hint{position:fixed;inset:0;display:flex;align-items:flex-end;justify-content:center;
+    padding-bottom:9vh;pointer-events:none;letter-spacing:.35em;font-size:13px;color:var(--dim);
+    text-transform:lowercase;transition:opacity 1.2s ease}
+  #hint.gone{opacity:0}
+  @media (prefers-reduced-motion:no-preference){
+    #hint span{animation:breathe 3.2s ease-in-out infinite}
+    @keyframes breathe{0%,100%{opacity:.45}50%{opacity:.95}}
+  }
+
+  #gear{position:fixed;right:14px;bottom:14px;width:38px;height:38px;border:1px solid var(--line);
+    border-radius:50%;background:var(--panel);backdrop-filter:blur(8px);color:var(--dim);
+    font-size:16px;line-height:1;cursor:pointer;transition:color .2s,transform .3s}
+  #gear:hover{color:var(--text);transform:rotate(40deg)}
+  #gear:focus-visible{outline:2px solid var(--text);outline-offset:2px}
+
+  #panel{position:fixed;right:14px;bottom:62px;width:240px;padding:16px 16px 12px;
+    background:var(--panel);backdrop-filter:blur(12px);border:1px solid var(--line);
+    border-radius:12px;display:none;flex-direction:column;gap:12px}
+  #panel.open{display:flex}
+  .ctl label{display:flex;justify-content:space-between;font-size:11px;color:var(--dim);
+    letter-spacing:.12em;text-transform:lowercase;margin-bottom:5px}
+  .ctl output{color:var(--text)}
+  input[type=range]{width:100%;height:18px;appearance:none;-webkit-appearance:none;background:transparent;cursor:pointer}
+  input[type=range]::-webkit-slider-runnable-track{height:2px;background:var(--line)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;
+    background:var(--text);margin-top:-5px}
+  input[type=range]::-moz-range-track{height:2px;background:var(--line)}
+  input[type=range]::-moz-range-thumb{width:12px;height:12px;border:none;border-radius:50%;background:var(--text)}
+  input[type=range]:focus-visible{outline:2px solid var(--text);outline-offset:4px}
+  #reset{margin-top:2px;padding:8px;border:1px solid var(--line);border-radius:8px;background:transparent;
+    color:var(--dim);font:inherit;font-size:11px;letter-spacing:.2em;text-transform:lowercase;cursor:pointer;
+    transition:color .2s,border-color .2s}
+  #reset:hover{color:var(--text);border-color:var(--text)}
+  #reset:focus-visible{outline:2px solid var(--text);outline-offset:2px}
+
+  #nogl{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+    text-align:center;padding:2rem;color:var(--dim);font-size:14px;line-height:1.7}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint"><span>drag to orbit &middot; scroll to approach</span></div>
+<button id="gear" aria-label="Settings">&#9881;</button>
+<div id="panel" role="dialog" aria-label="Parameters">
+  <div class="ctl"><label>exposure <output id="oExp">1.00</output></label>
+    <input type="range" id="rExp" min="0.4" max="2.4" step="0.05" value="1"></div>
+  <div class="ctl"><label>heat <output id="oHeat">5600</output></label>
+    <input type="range" id="rHeat" min="3000" max="10000" step="100" value="5600"></div>
+  <div class="ctl"><label>swirl <output id="oSw">1.00</output></label>
+    <input type="range" id="rSw" min="0" max="3" step="0.05" value="1"></div>
+  <div class="ctl"><label>beaming <output id="oBeam">1.00</output></label>
+    <input type="range" id="rBeam" min="0" max="2" step="0.05" value="1"></div>
+  <button id="reset">reset view</button>
+</div>
+<div id="nogl">This browser doesn't support WebGL.<br>Try a newer browser.</div>
+
+<script type="module">
+/* ============ Accretion — a black hole, traced along real geodesics ============
+   Units: the Schwarzschild radius is 1. The event horizon sits at r=1, the
+   photon sphere at r=1.5, and the innermost stable orbit — the disk's inner
+   edge — at r=3. Every ray is integrated through curved spacetime with the
+   Binet acceleration a = -3/2 h² r̂/r⁴, so the lensing, the Einstein ring and
+   the doubled image of the disk are not painted on. They fall out of gravity. */
+import * as THREE from './three.module.min.js';
+
+const params = { exposure:1, heat:5600, swirl:1, beam:1 };
+const HOME_VIEW = { theta:2.35, phi:0.145, dist:16.5 };
+const view = { ...HOME_VIEW };
+
+const canvas = document.getElementById('c');
+function fail(){ document.getElementById('nogl').style.display='flex';
+  canvas.style.display='none'; document.getElementById('gear').style.display='none';
+  document.getElementById('hint').style.display='none'; }
+
+let renderer;
+try{
+  renderer = new THREE.WebGLRenderer({canvas, antialias:false, alpha:false, powerPreference:'high-performance'});
+}catch(e){ fail(); throw e; }
+renderer.setPixelRatio(1);
+
+/* ---------- the whole universe is one fragment shader ---------- */
+const U = {
+  uRes:      { value: new THREE.Vector2(1,1) },
+  uTanF:     { value: Math.tan(58/2 * Math.PI/180) },
+  uCamPos:   { value: new THREE.Vector3() },
+  uRight:    { value: new THREE.Vector3() },
+  uUp:       { value: new THREE.Vector3() },
+  uFwd:      { value: new THREE.Vector3() },
+  uSwirlT:   { value: 0 },
+  uExposure: { value: 1 },
+  uHeat:     { value: 5600 },
+  uBeam:     { value: 1 },
+};
+
+const frag = /* glsl */`
+precision highp float;
+varying vec2 vNdc;
+uniform vec2  uRes;
+uniform float uTanF;
+uniform vec3  uCamPos, uRight, uUp, uFwd;
+uniform float uSwirlT, uExposure, uHeat, uBeam;
+
+const float R_IN  = 3.0;    /* innermost stable circular orbit */
+const float R_OUT = 9.4;    /* the disk thins away out here    */
+
+/* ----- little toolbox ----- */
+float hash12(vec2 p){ vec3 q = fract(vec3(p.xyx)*0.1031); q += dot(q, q.yzx+33.33); return fract((q.x+q.y)*q.z); }
+float hash13(vec3 p){ p = fract(p*0.1031); p += dot(p, p.zyx+31.32); return fract((p.x+p.y)*p.z); }
+float vnoise(vec2 p){
+  vec2 i = floor(p), f = fract(p);
+  f *= f*(3.0-2.0*f);
+  return mix(mix(hash12(i),               hash12(i+vec2(1,0)), f.x),
+             mix(hash12(i+vec2(0,1)),     hash12(i+1.0),       f.x), f.y);
+}
+float fbm(vec2 p){
+  float a = 0.5, s = 0.0;
+  for (int i=0;i<4;i++){ s += a*vnoise(p); p = p*2.03 + 11.7; a *= 0.5; }
+  return s;
+}
+float vnoise3(vec3 p){
+  vec3 i = floor(p), f = fract(p);
+  f *= f*(3.0-2.0*f);
+  return mix(
+    mix(mix(hash13(i),               hash13(i+vec3(1,0,0)), f.x),
+        mix(hash13(i+vec3(0,1,0)),   hash13(i+vec3(1,1,0)), f.x), f.y),
+    mix(mix(hash13(i+vec3(0,0,1)),   hash13(i+vec3(1,0,1)), f.x),
+        mix(hash13(i+vec3(0,1,1)),   hash13(i+1.0),         f.x), f.y), f.z);
+}
+float fbm3(vec3 p){
+  float a = 0.5, s = 0.0;
+  for (int i=0;i<3;i++){ s += a*vnoise3(p); p = p*2.07 + 19.1; a *= 0.5; }
+  return s;
+}
+/* glowing gas by temperature, kelvin in, chromaticity out */
+vec3 blackbody(float t){
+  t = clamp(t, 1500.0, 12000.0) / 100.0;
+  vec3 c;
+  c.r = t <= 66.0 ? 1.0 : clamp(1.29294*pow(t-60.0, -0.1332), 0.0, 1.0);
+  c.g = t <= 66.0 ? clamp(0.39008*log(t) - 0.63184, 0.0, 1.0)
+                  : clamp(1.12989*pow(t-60.0, -0.0755), 0.0, 1.0);
+  c.b = t >= 66.0 ? 1.0 : (t <= 19.0 ? 0.0 : clamp(0.54321*log(t-10.0) - 1.19625, 0.0, 1.0));
+  return c;
+}
+vec3 aces(vec3 x){ return clamp(x*(2.51*x + 0.03)/(x*(2.43*x + 0.59) + 0.14), 0.0, 1.0); }
+
+/* ----- the sky the hole distorts ----- */
+vec3 stars(vec3 d){
+  vec3 col = vec3(0.0);
+  float s = 21.0;
+  for (int L=0; L<2; L++){
+    vec3 id = floor(d*s);
+    float h = hash13(id);
+    vec3 off = vec3(hash13(id+13.1), hash13(id+27.7), hash13(id+41.3)) - 0.5;
+    /* angular distance to the star keeps it round at any obliquity */
+    vec3 ds = normalize(id + 0.5 + off*0.72);
+    float b = pow(max((h - 0.685)/0.315, 0.0), 6.0);
+    float m = b * exp(-max(1.0 - dot(d, ds), 0.0) * s*s * (260.0 + h*520.0));
+    col += mix(vec3(1.0,0.72,0.5), vec3(0.62,0.75,1.0), fract(h*7.31)) * m * 3.0;
+    s = 43.0;
+  }
+  return col;
+}
+vec3 background(vec3 d){
+  vec3 col = vec3(0.0);
+  float n1 = fbm3(d*2.4);
+  float n2 = fbm3(d*5.1 + n1*1.7);
+  vec3 neb = mix(vec3(0.030,0.022,0.060), vec3(0.085,0.035,0.110), n2);
+  col += neb * n1*n1;
+  float band = exp(-abs(dot(d, normalize(vec3(0.48,0.62,0.62))))*4.5);
+  col += vec3(0.050,0.038,0.065) * band * (0.35 + 0.65*n2);
+  col += stars(d);
+  return col;
+}
+
+/* ----- one crossing of the glowing disk ----- */
+vec4 disk(vec3 hp, vec3 vdir){
+  float r = length(hp.xz);
+  /* differential rotation: inner gas laps the outer, shearing noise into trailing arms */
+  float ang = (uSwirlT + 55.0) * 1.15 * inversesqrt(r*r*r);
+  float c = cos(ang), sn = sin(ang);
+  vec2 q = mat2(c, sn, -sn, c) * hp.xz;
+  float lump  = fbm(q*0.55);
+  float det   = fbm(q*1.55 + lump*2.4);
+  float bands = 0.82 + 0.18*vnoise(vec2(r*1.1, 1.7));
+  float den = (0.35 + 0.65*det) * (0.45 + 0.55*lump) * bands;
+  den *= smoothstep(R_IN, R_IN + 0.45, r) * smoothstep(R_OUT, R_OUT - 2.2, r) * exp(-(r - R_IN)*0.16);
+  den = pow(den, 1.2);                                      /* pull the gas into filaments */
+  /* special + general relativity: beamed toward us, reddened by the well */
+  vec3 That = normalize(vec3(hp.z, 0.0, -hp.x));            /* keplerian flow direction */
+  float beta = clamp(sqrt(0.5/max(r - 1.0, 0.6)), 0.0, 0.85);
+  float gam = inversesqrt(1.0 - beta*beta);
+  float dop = 1.0/(gam*(1.0 - beta*dot(That, -vdir)));
+  float shift = dop * sqrt(max(1.0 - 1.0/r, 0.0));
+  float Tk = uHeat * pow(R_IN/r, 1.0) * mix(1.0, shift, clamp(uBeam, 0.0, 1.0));
+  float E = den * (0.45 + 0.55*det) * pow(R_IN/r, 2.5) * pow(shift, 3.0*uBeam) * 3.4;
+  E *= 1.0 + exp(-(r - R_IN)*2.4)*1.6;                      /* white-hot inner rim */
+  float a = clamp(den*3.2, 0.0, 1.0) * 0.9;
+  return vec4(blackbody(Tk)*E, a);
+}
+
+void main(){
+  vec2 sc = vNdc * vec2(uRes.x/uRes.y, 1.0) * uTanF;
+  vec3 dir = normalize(uFwd + sc.x*uRight + sc.y*uUp);
+
+  vec3 p = uCamPos;
+  vec3 v = dir;
+  vec3 hv = cross(p, v);
+  float h2 = dot(hv, hv);          /* conserved angular momentum sets the bending */
+
+  vec3 col = vec3(0.0);
+  float trans = 1.0;
+  bool captured = false, escaped = false;
+  vec3 pPrev = p, vPrev = v;
+
+  for (int i = 0; i < 320; i++){
+    float r2 = dot(p, p);
+    if (r2 < 1.0)                        { captured = true; break; }
+    if (r2 > 2000.0 && dot(p, v) > 0.0)  { escaped = true;  break; }
+    float r = sqrt(r2);
+    float dt = clamp(r*0.09, 0.03, 1.1);
+    pPrev = p; vPrev = v;
+    /* leapfrog through curved spacetime */
+    vec3 a = -1.5 * h2 * p / (r2*r2*r);
+    v += a * (0.5*dt);
+    p += v * dt;
+    float r2n = dot(p, p);
+    vec3 a2 = -1.5 * h2 * p / (r2n*r2n*sqrt(r2n));
+    v += a2 * (0.5*dt);
+    /* did we pierce the equatorial plane inside the disk? */
+    if (pPrev.y * p.y < 0.0){
+      float tc = pPrev.y / (pPrev.y - p.y);
+      vec3 hp = mix(pPrev, p, tc);
+      float rr = length(hp.xz);
+      if (rr > R_IN && rr < R_OUT){
+        vec4 dc = disk(hp, normalize(mix(vPrev, v, tc)));
+        col += trans * dc.rgb;
+        trans *= 1.0 - dc.a;
+        if (trans < 0.02) { captured = true; break; }
+      }
+    }
+  }
+  if (escaped) col += trans * background(normalize(v));
+
+  /* photon-ring accent: rays that skimmed the critical impact parameter b = 3√3/2 */
+  float b = sqrt(h2);
+  float db = b - 2.598;
+  float toward = smoothstep(-0.15, 0.12, -dot(normalize(uCamPos), dir));
+  col += blackbody(uHeat*0.95) * exp(-db*db*34.0) * 0.10 * toward;
+
+  col *= uExposure;
+  col *= 1.0 - 0.28*smoothstep(0.35, 1.6, dot(vNdc, vNdc));   /* settle the corners */
+  col = aces(col);
+  col = pow(col, vec3(1.0/2.2));
+  col += (hash12(gl_FragCoord.xy) - 0.5) * (1.6/255.0);
+  gl_FragColor = vec4(col, 1.0);
+}`;
+
+const geo = new THREE.BufferGeometry();
+geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1,-1,0, 3,-1,0, -1,3,0]), 3));
+const quad = new THREE.Mesh(geo, new THREE.ShaderMaterial({
+  uniforms: U,
+  vertexShader: `varying vec2 vNdc; void main(){ vNdc = position.xy; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+  fragmentShader: frag,
+  depthTest: false, depthWrite: false,
+}));
+quad.frustumCulled = false;
+const scene = new THREE.Scene();
+scene.add(quad);
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+/* ---------- orbiting the hole ---------- */
+const UP = new THREE.Vector3(0,1,0);
+function placeCamera(){
+  const cp = Math.cos(view.phi), sp = Math.sin(view.phi);
+  U.uCamPos.value.set(cp*Math.cos(view.theta), sp, cp*Math.sin(view.theta)).multiplyScalar(view.dist);
+  U.uFwd.value.copy(U.uCamPos.value).multiplyScalar(-1).normalize();
+  U.uRight.value.crossVectors(U.uFwd.value, UP).normalize();
+  U.uUp.value.crossVectors(U.uRight.value, U.uFwd.value);
+}
+
+/* ---------- adaptive resolution (headless/weak GPUs coarsen, then recover) ---------- */
+const MAX_SCALE = Math.min(devicePixelRatio || 1, 1.6);
+let resScale = Math.min(0.7, MAX_SCALE), fpsEMA = 30, cool = 5;
+function applySize(){
+  const w = Math.max(2, Math.round(innerWidth  * resScale));
+  const h = Math.max(2, Math.round(innerHeight * resScale));
+  renderer.setSize(w, h, false);
+  U.uRes.value.set(w, h);
+}
+addEventListener('resize', applySize);
+applySize();
+
+/* ---------- ui ---------- */
+const hint = document.getElementById('hint');
+const gear = document.getElementById('gear');
+const panel = document.getElementById('panel');
+gear.addEventListener('click', () => panel.classList.toggle('open'));
+canvas.addEventListener('pointerdown', () => panel.classList.remove('open'));
+
+function bind(rid, oid, key, fmt){
+  const r = document.getElementById(rid), o = document.getElementById(oid);
+  r.addEventListener('input', () => { params[key] = +r.value; o.textContent = fmt(+r.value); });
+}
+bind('rExp','oExp','exposure', v => v.toFixed(2));
+bind('rHeat','oHeat','heat',   v => v.toFixed(0));
+bind('rSw','oSw','swirl',      v => v.toFixed(2));
+bind('rBeam','oBeam','beam',   v => v.toFixed(2));
+document.getElementById('reset').addEventListener('click', () => Object.assign(view, HOME_VIEW));
+
+/* drag orbits, wheel and pinch approach */
+const perf = () => performance.now()/1000;
+let lastInputT = 0;
+const pts = new Map();
+let pinchD = 0;
+canvas.addEventListener('pointerdown', e => {
+  canvas.setPointerCapture(e.pointerId);
+  pts.set(e.pointerId, [e.clientX, e.clientY]);
+  if (pts.size === 2){
+    const [a, b] = [...pts.values()];
+    pinchD = Math.hypot(a[0]-b[0], a[1]-b[1]);
+  }
+  lastInputT = perf();
+  hint.classList.add('gone');
+});
+canvas.addEventListener('pointermove', e => {
+  if (!pts.has(e.pointerId)) return;
+  const prev = pts.get(e.pointerId);
+  pts.set(e.pointerId, [e.clientX, e.clientY]);
+  lastInputT = perf();
+  if (pts.size === 1){
+    view.theta -= (e.clientX - prev[0]) * 0.0042;
+    view.phi    = Math.min(1.32, Math.max(-1.32, view.phi + (e.clientY - prev[1]) * 0.0042));
+  } else if (pts.size === 2){
+    const [a, b] = [...pts.values()];
+    const d = Math.hypot(a[0]-b[0], a[1]-b[1]);
+    if (pinchD > 0) view.dist = Math.min(40, Math.max(2.05, view.dist * pinchD/d));
+    pinchD = d;
+  }
+});
+const drop = e => { pts.delete(e.pointerId); pinchD = 0; };
+canvas.addEventListener('pointerup', drop);
+canvas.addEventListener('pointercancel', drop);
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  view.dist = Math.min(40, Math.max(2.05, view.dist * Math.exp(e.deltaY*0.0012)));
+  lastInputT = perf();
+  hint.classList.add('gone');
+}, {passive:false});
+
+const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ---------- loop ---------- */
+let last = perf(), swirlT = 0, frames = 0;
+function frame(){
+  requestAnimationFrame(frame);
+  const now = perf();
+  const dt = Math.min(now-last, 1/20);
+  const fps = 1/Math.max(now-last, 1e-4);
+  last = now;
+  /* drop fast when struggling, trust slowly when recovering */
+  fpsEMA = fps < fpsEMA ? fpsEMA*0.7 + fps*0.3 : fpsEMA*0.93 + fps*0.07;
+  frames++;
+
+  /* coarsen the image when struggling, sharpen when comfortable */
+  if (--cool <= 0){
+    if (fpsEMA < 27 && resScale > 0.22){
+      resScale = Math.max(0.22, resScale * Math.max(0.5, Math.min(0.95, fpsEMA/30)));
+      applySize(); cool = 10;
+    } else if (fpsEMA > 55 && resScale < MAX_SCALE){
+      resScale = Math.min(MAX_SCALE, resScale*1.09); applySize(); cool = 15;
+    }
+  }
+
+  /* left alone, drift slowly around the hole */
+  if (!calm && now - lastInputT > 6) view.theta += dt*0.045;
+
+  swirlT += dt * params.swirl;
+  U.uSwirlT.value = swirlT;
+  U.uExposure.value = params.exposure;
+  U.uHeat.value = params.heat;
+  U.uBeam.value = params.beam;
+  placeCamera();
+  renderer.render(scene, camera);
+}
+frame();
+
+/* module scope is private; leave a hatch for tests and the curious */
+window.hole = { params, view,
+  get fpsEMA(){ return fpsEMA; }, get resScale(){ return resScale; },
+  get frames(){ return frames; }, get swirlT(){ return swirlT; },
+  uniforms: U,
+  setScale(s){ resScale = Math.min(MAX_SCALE, Math.max(0.1, s)); applySize(); cool = 1e9; } };
+</script>
+</body>
+</html>
