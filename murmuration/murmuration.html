@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>murmuration</title>
+<style>
+  :root{
+    --bg:#050507;
+    --panel:#101014cc;
+    --line:#ffffff1f;
+    --text:#e8e6f0;
+    --dim:#9a97a8;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden;background:var(--bg);
+    font-family:ui-monospace,'Cascadia Code','JetBrains Mono',Menlo,monospace;
+    color:var(--text);-webkit-user-select:none;user-select:none}
+  #c{position:fixed;inset:0;width:100%;height:100%;touch-action:none;display:block}
+
+  #hint{position:fixed;inset:0;display:flex;align-items:flex-end;justify-content:center;
+    padding-bottom:9vh;pointer-events:none;letter-spacing:.35em;font-size:13px;color:var(--dim);
+    text-transform:lowercase;transition:opacity 1.2s ease}
+  #hint.gone{opacity:0}
+  @media (prefers-reduced-motion:no-preference){
+    #hint span{animation:breathe 3.2s ease-in-out infinite}
+    @keyframes breathe{0%,100%{opacity:.45}50%{opacity:.95}}
+  }
+
+  #gear{position:fixed;right:14px;bottom:14px;width:38px;height:38px;border:1px solid var(--line);
+    border-radius:50%;background:var(--panel);backdrop-filter:blur(8px);color:var(--dim);
+    font-size:16px;line-height:1;cursor:pointer;transition:color .2s,transform .3s}
+  #gear:hover{color:var(--text);transform:rotate(40deg)}
+  #gear:focus-visible{outline:2px solid var(--text);outline-offset:2px}
+
+  #panel{position:fixed;right:14px;bottom:62px;width:240px;padding:16px 16px 12px;
+    background:var(--panel);backdrop-filter:blur(12px);border:1px solid var(--line);
+    border-radius:12px;display:none;flex-direction:column;gap:12px}
+  #panel.open{display:flex}
+  .ctl label{display:flex;justify-content:space-between;font-size:11px;color:var(--dim);
+    letter-spacing:.12em;text-transform:lowercase;margin-bottom:5px}
+  .ctl output{color:var(--text)}
+  input[type=range]{width:100%;height:18px;appearance:none;-webkit-appearance:none;background:transparent;cursor:pointer}
+  input[type=range]::-webkit-slider-runnable-track{height:2px;background:var(--line)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;
+    background:var(--text);margin-top:-5px}
+  input[type=range]::-moz-range-track{height:2px;background:var(--line)}
+  input[type=range]::-moz-range-thumb{width:12px;height:12px;border:none;border-radius:50%;background:var(--text)}
+  input[type=range]:focus-visible{outline:2px solid var(--text);outline-offset:4px}
+  #reset{margin-top:2px;padding:8px;border:1px solid var(--line);border-radius:8px;background:transparent;
+    color:var(--dim);font:inherit;font-size:11px;letter-spacing:.2em;text-transform:lowercase;cursor:pointer;
+    transition:color .2s,border-color .2s}
+  #reset:hover{color:var(--text);border-color:var(--text)}
+  #reset:focus-visible{outline:2px solid var(--text);outline-offset:2px}
+
+  #nogl{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+    text-align:center;padding:2rem;color:var(--dim);font-size:14px;line-height:1.7}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint"><span>move to startle &middot; click to strike</span></div>
+<button id="gear" aria-label="Settings">&#9881;</button>
+<div id="panel" role="dialog" aria-label="Parameters">
+  <div class="ctl"><label>birds <output id="oBirds">2600</output></label>
+    <input type="range" id="rBirds" min="400" max="5000" step="100" value="2600"></div>
+  <div class="ctl"><label>cohesion <output id="oCoh">1.00</output></label>
+    <input type="range" id="rCoh" min="0" max="2" step="0.05" value="1"></div>
+  <div class="ctl"><label>speed <output id="oSpd">1.00</output></label>
+    <input type="range" id="rSpd" min="0.5" max="1.8" step="0.05" value="1"></div>
+  <div class="ctl"><label>fear <output id="oFear">1.00</output></label>
+    <input type="range" id="rFear" min="0" max="2" step="0.05" value="1"></div>
+  <button id="reset">reseed flock</button>
+</div>
+<div id="nogl">This browser doesn't support WebGL.<br>Try a newer browser.</div>
+
+<script type="module">
+/* ============ Murmuration — starlings over water at dusk ============ */
+import * as THREE from './three.module.min.js';
+
+const params = { birds:2600, cohesion:1, speed:1, fear:1 };
+
+const MAX = 5000;
+const HOME = new THREE.Vector3(0, 26, 0);       /* heart of the roost airspace */
+const R_PERCEPT = 6, R_SEP = 2.1;               /* neighbor / crowding radii   */
+const MAX_NEI = 14;                             /* neighbors sampled per bird  */
+
+const canvas = document.getElementById('c');
+function fail(){ document.getElementById('nogl').style.display='flex';
+  canvas.style.display='none'; document.getElementById('gear').style.display='none';
+  document.getElementById('hint').style.display='none'; }
+
+let renderer;
+try{
+  renderer = new THREE.WebGLRenderer({canvas, antialias:true, alpha:false, powerPreference:'high-performance'});
+}catch(e){ fail(); throw e; }
+renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 1200);
+
+const FOG_COL = new THREE.Color(0x1c1330);
+const SUN_DIR = new THREE.Vector3(-0.42, 0.05, -0.9).normalize();
+
+/* ---------- sky dome ---------- */
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(560, 48, 24),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite:false,
+    uniforms:{ uTime:{value:0}, uSun:{value:SUN_DIR} },
+    vertexShader:`
+      varying vec3 vDir;
+      void main(){ vDir = position;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader:`
+      precision highp float;
+      varying vec3 vDir; uniform float uTime; uniform vec3 uSun;
+      float hash(vec3 p){ return fract(sin(dot(p, vec3(127.1,311.7,74.7)))*43758.5453); }
+      void main(){
+        vec3 d = normalize(vDir);
+        float h = clamp(d.y, -1.0, 1.0);
+        /* dusk gradient: ember horizon -> plum -> deep indigo zenith */
+        vec3 zenith  = vec3(0.020, 0.022, 0.058);
+        vec3 high    = vec3(0.058, 0.055, 0.145);
+        vec3 plum    = vec3(0.235, 0.110, 0.240);
+        vec3 ember   = vec3(0.780, 0.360, 0.165);
+        vec3 col = mix(high, zenith, smoothstep(0.28, 0.9, h));
+        col = mix(plum,  col, smoothstep(0.10, 0.34, h));
+        col = mix(ember, col, smoothstep(0.005, 0.14, h));
+        /* below the waterline, settle into the same haze the far water fades to */
+        col = mix(vec3(0.060, 0.041, 0.104), col, smoothstep(-0.16, 0.005, h));
+        /* sunset glow lingering where the sun went down */
+        float g = max(dot(d, normalize(uSun)), 0.0);
+        col += vec3(1.0, 0.42, 0.14) * (pow(g, 9.0)*0.55 + pow(g, 90.0)*0.9) * smoothstep(-0.02, 0.10, h);
+        /* first stars, fading in toward the zenith */
+        vec3 cell = floor(d*420.0);
+        float s = hash(cell);
+        float star = step(0.9988, s) * smoothstep(0.10, 0.45, h);
+        star *= 0.55 + 0.45*sin(uTime*(1.0+s*3.0) + s*40.0);
+        col += vec3(0.85, 0.88, 1.0) * star * 0.8;
+        gl_FragColor = vec4(col, 1.0);
+      }`
+  })
+);
+scene.add(sky);
+
+/* ---------- water ---------- */
+const water = new THREE.Mesh(
+  new THREE.PlaneGeometry(1400, 1400),
+  new THREE.ShaderMaterial({
+    uniforms:{ uTime:{value:0}, uSun:{value:SUN_DIR}, uFogCol:{value:FOG_COL}, uCam:{value:new THREE.Vector3()} },
+    vertexShader:`
+      varying vec3 vW; varying float vDepth;
+      void main(){
+        vec4 w = modelMatrix * vec4(position,1.0);
+        vW = w.xyz;
+        vec4 mv = viewMatrix * w;
+        vDepth = -mv.z;
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader:`
+      precision highp float;
+      varying vec3 vW; varying float vDepth;
+      uniform float uTime; uniform vec3 uSun; uniform vec3 uFogCol; uniform vec3 uCam;
+      void main(){
+        vec3 col = vec3(0.016, 0.017, 0.042);
+        vec2 p = vW.xz;
+        /* slow breathing of the surface */
+        float swell = sin(p.x*0.055 + uTime*0.35) * sin(p.y*0.042 - uTime*0.27);
+        col += vec3(0.010, 0.010, 0.022) * swell;
+        /* the sun's reflection: a wobbling ember road toward the afterglow */
+        vec2 az = normalize(uSun.xz);
+        float along = dot(p, az);
+        float perp  = dot(p, vec2(-az.y, az.x));
+        perp += sin(along*0.30 + uTime*0.9)*1.9 + sin(along*0.83 - uTime*1.4)*0.8;
+        float w = 4.0 + max(along,0.0)*0.10;
+        float streak = exp(-perp*perp/(w*w)) * smoothstep(-8.0, 55.0, along) * exp(-max(along,0.0)*0.0032);
+        float sparkle = 0.72 + 0.28*sin(along*1.7 - uTime*2.1 + perp*0.9);
+        col += vec3(0.95, 0.38, 0.13) * streak * sparkle * 0.5;
+        /* haze folds distant water into the sky it reflects: ember toward the sun, plum away */
+        float toSun = max(dot(normalize(vW.xz - uCam.xz), normalize(uSun.xz)), 0.0);
+        vec3 haze = mix(uFogCol*0.55, vec3(0.42, 0.185, 0.085), pow(toSun, 3.0)*0.75);
+        float f = 1.0 - exp(-pow(vDepth*0.0035, 2.0));
+        col = mix(col, haze, f);
+        gl_FragColor = vec4(col, 1.0);
+      }`
+  })
+);
+water.rotation.x = -Math.PI/2;
+scene.add(water);
+
+/* ---------- the flock ---------- */
+const pos = new Float32Array(MAX*3);
+const vel = new Float32Array(MAX*3);
+const seed = new Float32Array(MAX);
+
+function reseed(){
+  for (let i=0;i<MAX;i++){
+    const a = Math.random()*Math.PI*2, r = 4 + Math.pow(Math.random(),0.5)*17;
+    pos[i*3]   = HOME.x + Math.cos(a)*r;
+    pos[i*3+1] = HOME.y + (Math.random()-0.5)*14;
+    pos[i*3+2] = HOME.z + Math.sin(a)*r;
+    vel[i*3]   = -Math.sin(a)*9 + (Math.random()-0.5)*4;
+    vel[i*3+1] = (Math.random()-0.5)*3;
+    vel[i*3+2] =  Math.cos(a)*9 + (Math.random()-0.5)*4;
+    seed[i] = Math.random();
+  }
+}
+reseed();
+
+/* a bird: chevron of two wing triangles, flapped in the vertex shader */
+const geo = new THREE.InstancedBufferGeometry();
+geo.setAttribute('position', new THREE.Float32BufferAttribute([
+   0,0, 0.55,   0,0,-0.35,   -0.62,0,-0.05,   0.62,0,-0.05 ], 3));
+geo.setAttribute('aWing', new THREE.Float32BufferAttribute([0,0,-1,1], 1));
+geo.setIndex([0,2,1, 0,1,3]);
+const iPos = new THREE.InstancedBufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage);
+const iVel = new THREE.InstancedBufferAttribute(vel, 3).setUsage(THREE.DynamicDrawUsage);
+geo.setAttribute('iPos', iPos);
+geo.setAttribute('iVel', iVel);
+geo.setAttribute('iSeed', new THREE.InstancedBufferAttribute(seed, 1));
+geo.instanceCount = params.birds;
+geo.boundingSphere = new THREE.Sphere(HOME.clone(), 1000); /* never frustum-culled */
+
+const birdMat = new THREE.ShaderMaterial({
+  side: THREE.DoubleSide,
+  uniforms:{ uTime:{value:0}, uFogCol:{value:FOG_COL} },
+  vertexShader:`
+    attribute vec3 iPos; attribute vec3 iVel; attribute float iSeed; attribute float aWing;
+    uniform float uTime;
+    varying float vDepth; varying float vGlint;
+    void main(){
+      vec3 fwd = normalize(iVel + vec3(1e-4, 0.0, 0.0));
+      vec3 right = normalize(cross(fwd, vec3(0.0,1.0,0.0)) + vec3(1e-5));
+      vec3 up = cross(right, fwd);
+      float flap = sin(uTime*(7.0 + iSeed*6.0) + iSeed*40.0);
+      vec3 local = position;
+      /* wings beat up around the body; a touch of sweep on the downstroke */
+      local.y += flap * 0.55 * abs(aWing);
+      local.z -= abs(flap) * 0.10 * abs(aWing);
+      float size = 0.52 + iSeed*0.42;
+      vec3 world = iPos + (right*local.x + up*local.y + fwd*local.z) * size;
+      vec4 mv = viewMatrix * vec4(world, 1.0);
+      vDepth = -mv.z;
+      vGlint = flap*0.5 + 0.5;
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader:`
+    precision highp float;
+    varying float vDepth; varying float vGlint;
+    uniform vec3 uFogCol;
+    void main(){
+      /* near-silhouette, wings catching a little of the afterglow */
+      vec3 col = mix(vec3(0.016,0.016,0.034), vec3(0.11,0.055,0.05), vGlint*0.45);
+      float f = 1.0 - exp(-pow(vDepth*0.0042, 2.0));
+      col = mix(col, uFogCol*0.85, f);
+      gl_FragColor = vec4(col, 1.0);
+    }`
+});
+scene.add(new THREE.Mesh(geo, birdMat));
+
+/* ---------- spatial hash grid (counting sort, no allocation per frame) ---------- */
+const CELL = R_PERCEPT, GDIM = 26, GOFF = GDIM*CELL*0.5; /* covers ±78 */
+const NCELLS = GDIM*GDIM*GDIM;
+const cellStart = new Int32Array(NCELLS+1);
+const cellIdx = new Int32Array(MAX);
+const boidCell = new Int32Array(MAX);
+const gx = v => Math.max(0, Math.min(GDIM-1, ((v+GOFF)/CELL)|0));
+
+function buildGrid(n){
+  cellStart.fill(0);
+  for (let i=0;i<n;i++){
+    const c = (gx(pos[i*3])*GDIM + gx(pos[i*3+1]))*GDIM + gx(pos[i*3+2]);
+    boidCell[i] = c; cellStart[c+1]++;
+  }
+  for (let c=0;c<NCELLS;c++) cellStart[c+1] += cellStart[c];
+  const cursor = cellStart.slice(0, NCELLS);
+  for (let i=0;i<n;i++) cellIdx[cursor[boidCell[i]]++] = i;
+}
+
+/* ---------- predator (your pointer) ---------- */
+const pred = new THREE.Vector3(1e5, 1e5, 1e5);
+let predW = 0, strike = 0, lastPointerT = -1e5;
+const ndc = new THREE.Vector2();
+const raycaster = new THREE.Raycaster();
+
+/* ---------- flight ---------- */
+const target = new THREE.Vector3();
+const centroid = new THREE.Vector3(HOME.x, HOME.y, HOME.z);
+const R2 = R_PERCEPT*R_PERCEPT, RS2 = R_SEP*R_SEP;
+
+function step(dt, t){
+  /* the flock chases a slowly wandering, invisible intention */
+  target.set(
+    Math.sin(t*0.110)*24 + Math.sin(t*0.041+2.0)*12,
+    HOME.y + Math.sin(t*0.070+1.0)*9,
+    Math.cos(t*0.090)*20 + Math.sin(t*0.053+4.0)*10);
+
+  const n = geo.instanceCount;
+  buildGrid(n);
+
+  const vmax = 14*params.speed, vmin = 6.5*params.speed;
+  const kCoh = 0.9*params.cohesion, kAli = 3.2, kSep = 34;
+  const fear = params.fear * (16 + strike*110) * predW;
+  let cx=0, cy=0, cz=0;
+
+  for (let i=0;i<n;i++){
+    const ix = i*3;
+    const px = pos[ix], py = pos[ix+1], pz = pos[ix+2];
+    let ax=0, ay=0, az=0;
+
+    /* neighbors */
+    let cnt=0, avx=0, avy=0, avz=0, apx=0, apy=0, apz=0, sx=0, sy=0, sz=0;
+    const cgx = gx(px), cgy = gx(py), cgz = gx(pz);
+    outer:
+    for (let dx=-1;dx<=1;dx++) for (let dy=-1;dy<=1;dy++) for (let dz=-1;dz<=1;dz++){
+      const X = cgx+dx, Y = cgy+dy, Z = cgz+dz;
+      if (X<0||X>=GDIM||Y<0||Y>=GDIM||Z<0||Z>=GDIM) continue;
+      const c = (X*GDIM + Y)*GDIM + Z;
+      for (let k=cellStart[c]; k<cellStart[c+1]; k++){
+        const j = cellIdx[k]; if (j===i) continue;
+        const jx = j*3;
+        const ddx = pos[jx]-px, ddy = pos[jx+1]-py, ddz = pos[jx+2]-pz;
+        const d2 = ddx*ddx + ddy*ddy + ddz*ddz;
+        if (d2 > R2) continue;
+        avx += vel[jx]; avy += vel[jx+1]; avz += vel[jx+2];
+        apx += ddx; apy += ddy; apz += ddz;
+        if (d2 < RS2){ const inv = 1/(d2+0.05); sx -= ddx*inv; sy -= ddy*inv; sz -= ddz*inv; }
+        if (++cnt >= MAX_NEI) break outer;
+      }
+    }
+    if (cnt > 0){
+      const inv = 1/cnt;
+      ax += (avx*inv - vel[ix])   * kAli;
+      ay += (avy*inv - vel[ix+1]) * kAli;
+      az += (avz*inv - vel[ix+2]) * kAli;
+      ax += apx*inv*kCoh; ay += apy*inv*kCoh; az += apz*inv*kCoh;
+      ax += sx*kSep; ay += sy*kSep; az += sz*kSep;
+    }
+
+    /* homeward pull, gentle until the flock strays */
+    const tx = target.x-px, ty = target.y-py, tz = target.z-pz;
+    const td = Math.sqrt(tx*tx+ty*ty+tz*tz)+1e-4;
+    const pull = 0.45*Math.max(0, td-9);
+    ax += tx/td*pull; ay += ty/td*pull; az += tz/td*pull;
+
+    /* the water is hard ground; the high air thins out */
+    if (py < 7)  ay += (7-py)*9;
+    if (py > 52) ay -= (py-52)*4;
+
+    /* flee the falcon */
+    if (fear > 0){
+      const fx = px-pred.x, fy = py-pred.y, fz = pz-pred.z;
+      const fd2 = fx*fx+fy*fy+fz*fz;
+      if (fd2 < 400){
+        const fd = Math.sqrt(fd2)+1e-4;
+        const s = fear*(1-fd/20)/fd;
+        ax += fx*s; ay += fy*s; az += fz*s;
+      }
+    }
+
+    /* a mind of one's own */
+    const w = seed[i]*37;
+    ax += Math.sin(t*1.7+w)*1.3; ay += Math.sin(t*1.3+w*2.0)*0.8; az += Math.cos(t*1.9+w)*1.3;
+
+    /* integrate, keep airspeed in the starling band */
+    let vx = vel[ix]+ax*dt, vy = vel[ix+1]+ay*dt, vz = vel[ix+2]+az*dt;
+    const sp = Math.sqrt(vx*vx+vy*vy+vz*vz)+1e-6;
+    const cl = sp>vmax ? vmax/sp : (sp<vmin ? vmin/sp : 1);
+    vx*=cl; vy*=cl; vz*=cl;
+    vel[ix]=vx; vel[ix+1]=vy; vel[ix+2]=vz;
+    pos[ix]+=vx*dt; pos[ix+1]+=vy*dt; pos[ix+2]+=vz*dt;
+    cx+=pos[ix]; cy+=pos[ix+1]; cz+=pos[ix+2];
+  }
+  if (n>0) centroid.set(cx/n, cy/n, cz/n);
+  iPos.needsUpdate = true;
+  iVel.needsUpdate = true;
+}
+
+/* ---------- camera: a slow drift around the roost ---------- */
+const lookAt = centroid.clone();
+function placeCamera(t){
+  const a = t*0.021;
+  camera.position.set(Math.sin(a)*82, 17 + Math.sin(t*0.05)*4, Math.cos(a)*82);
+  lookAt.lerp(centroid, 0.03);
+  camera.lookAt(lookAt);
+  /* pointer ray -> falcon hovering at the flock's depth */
+  raycaster.setFromCamera(ndc, camera);
+  const along = Math.max(12, raycaster.ray.direction.dot(
+    pred.copy(centroid).sub(camera.position)));
+  pred.copy(camera.position).addScaledVector(raycaster.ray.direction, along);
+}
+
+/* ---------- adaptive budget (headless/weak GPUs shed birds, then recover) ---------- */
+let fpsEMA = 60, budget = MAX;
+
+/* ---------- ui ---------- */
+const hint = document.getElementById('hint');
+const gear = document.getElementById('gear');
+const panel = document.getElementById('panel');
+gear.addEventListener('click', () => panel.classList.toggle('open'));
+canvas.addEventListener('pointerdown', () => panel.classList.remove('open'));
+
+function bind(rid, oid, key, fmt){
+  const r = document.getElementById(rid), o = document.getElementById(oid);
+  r.addEventListener('input', () => { params[key] = +r.value; o.textContent = fmt(+r.value); });
+}
+bind('rBirds','oBirds','birds', v => v.toFixed(0));
+bind('rCoh','oCoh','cohesion', v => v.toFixed(2));
+bind('rSpd','oSpd','speed',    v => v.toFixed(2));
+bind('rFear','oFear','fear',   v => v.toFixed(2));
+document.getElementById('reset').addEventListener('click', reseed);
+
+window.addEventListener('pointermove', e => {
+  ndc.set(e.clientX/innerWidth*2-1, -(e.clientY/innerHeight*2-1));
+  lastPointerT = perf();
+  hint.classList.add('gone');
+});
+canvas.addEventListener('pointerdown', e => {
+  ndc.set(e.clientX/innerWidth*2-1, -(e.clientY/innerHeight*2-1));
+  lastPointerT = perf();
+  strike = 1;
+  hint.classList.add('gone');
+});
+
+function resize(){
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+resize();
+
+/* ---------- loop ---------- */
+const perf = () => performance.now()/1000;
+let last = perf();
+function frame(){
+  requestAnimationFrame(frame);
+  const now = perf();
+  const dt = Math.min(now-last, 1/30);
+  const fps = 1/Math.max(now-last, 1e-4);
+  last = now;
+  fpsEMA = fpsEMA*0.95 + fps*0.05;
+
+  /* shed instances when struggling, regrow when comfortable */
+  if (fpsEMA < 24) budget = Math.max(400, budget*0.96);
+  else if (fpsEMA > 45) budget = Math.min(MAX, budget*1.005 + 1);
+  geo.instanceCount = Math.min(params.birds, Math.round(budget));
+
+  strike *= Math.exp(-dt*2.2);
+  predW += ((now-lastPointerT < 2.5 ? 1 : 0) - predW) * Math.min(1, dt*5);
+
+  step(dt, now);
+  placeCamera(now);
+  sky.material.uniforms.uTime.value = now;
+  water.material.uniforms.uTime.value = now;
+  water.material.uniforms.uCam.value.copy(camera.position);
+  birdMat.uniforms.uTime.value = now;
+  renderer.render(scene, camera);
+}
+frame();
+
+/* module scope is private; leave a hatch for tests and the curious */
+window.murm = { params, pos, vel, centroid, pred,
+  get fpsEMA(){ return fpsEMA; }, get budget(){ return budget; },
+  get active(){ return geo.instanceCount; }, get strike(){ return strike; },
+  get predW(){ return predW; }, reseed };
+</script>
+</body>
+</html>
