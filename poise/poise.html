@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<!-- poise — a Calder mobile. Brief written by one Claude, built by another, hung by Gabriel. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>poise</title>
+<link rel="icon" href="data:,">
+<style>
+  :root{
+    --bg:#edeae3;
+    --ink:#56514a;
+    --dim:#8b857a;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden;background:var(--bg);
+    font-family:Georgia,'Iowan Old Style','Palatino Linotype','Times New Roman',serif;
+    color:var(--ink);-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  #c{position:fixed;inset:0;width:100%;height:100%;touch-action:none;display:block;
+    opacity:1;transition:opacity .35s ease}
+  #c.dim{opacity:0}
+
+  /* museum label: appears, breathes once, and gets out of the way */
+  #label{position:fixed;left:max(26px, env(safe-area-inset-left));bottom:max(24px, env(safe-area-inset-bottom));
+    pointer-events:none;opacity:0;animation:label 11s ease forwards .8s}
+  #label h1{font-size:15px;font-weight:400;letter-spacing:.30em;color:var(--ink)}
+  #label p{font-size:11.5px;letter-spacing:.06em;color:var(--dim);margin-top:.45em;font-style:italic}
+  @keyframes label{0%{opacity:0}8%{opacity:1}72%{opacity:1}100%{opacity:0}}
+  #label.gone{animation:none;opacity:0;transition:opacity 1.2s ease}
+
+  #rehang{position:fixed;right:max(18px, env(safe-area-inset-right));bottom:max(16px, env(safe-area-inset-bottom));
+    border:0;background:none;font:inherit;font-size:11.5px;font-style:italic;letter-spacing:.14em;
+    color:var(--ink);opacity:.34;cursor:pointer;padding:8px 10px;transition:opacity .25s}
+  #rehang:hover{opacity:.85}
+  #rehang:focus-visible{outline:1px solid var(--ink);outline-offset:3px;opacity:.85}
+
+  /* a faint breath-fog where you press and hold */
+  #breath{position:fixed;width:110px;height:110px;margin:-55px 0 0 -55px;border-radius:50%;
+    background:radial-gradient(circle, rgba(112,104,90,.13), rgba(112,104,90,0) 68%);
+    pointer-events:none;display:none}
+  @media (prefers-reduced-motion:no-preference){
+    #breath.on{animation:puff 1.6s ease-in-out infinite}
+    @keyframes puff{0%,100%{transform:scale(.9)}50%{transform:scale(1.12)}}
+  }
+
+  /* the light pools a little, like a gallery */
+  #vignette{position:fixed;inset:0;pointer-events:none;
+    background:radial-gradient(120% 90% at 50% 42%, rgba(0,0,0,0) 55%, rgba(58,48,36,.10) 100%)}
+
+  #nogl{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+    text-align:center;padding:2rem;color:var(--dim);font-size:14px;font-style:italic;line-height:1.8}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="vignette"></div>
+<div id="label"><h1>poise</h1><p>drag a leaf&ensp;&middot;&ensp;press and hold to breathe</p></div>
+<button id="rehang" aria-label="hang a new mobile">rehang</button>
+<div id="breath"></div>
+<div id="nogl">poise needs WebGL to hang its mobile.</div>
+
+<script type="module">
+import * as THREE from './three.module.min.js';
+import * as RAPIER_NS from './rapier.es.js';
+const RAPIER = RAPIER_NS.init ? RAPIER_NS : RAPIER_NS.default;
+
+/* ============================================================================
+   poise — a hanging mobile after Alexander Calder.
+
+   A mobile is a tree of rigid arms connected by ball joints, every element
+   counterweighting every other. Nothing here is scripted: the composure you
+   see is just gravity, damping, and torque balance, computed once and then
+   left alone. Touch one leaf and the whole structure answers.
+
+   Physics: Rapier (fixed 120 Hz timestep, decoupled from the render loop).
+   Rendering: Three.js (one directional light; the shadow on the wall is
+   half the artwork).
+============================================================================ */
+
+/* ---------------------------------------------------------------- tuning */
+
+// Aesthetic: the brief offered "Gallery" (pale room, real shadow) or
+// "Nocturne" (dusk, glowing leaves). Gallery won: a mobile is about weight
+// and consequence, and a cast shadow is consequence made visible — the
+// sculpture drawing itself on the wall in real time. Nocturne hides that.
+const PAL = {
+  bg:      0xedeae3,
+  wall:    0xf3f0e8,
+  floor:   0xdcd7cb,
+  wire:    0x6f6a60,
+  black:   0x232326,
+  red:     0xd0331b,   // Calder's vermilion, matte
+  yellow:  0xe8b41f,
+  blue:    0x2a56a4,
+};
+
+const G = 9.81;
+const DT = 1 / 120;              // fixed physics step; render interpolates
+
+// Damping is the whole art. Linear damping (air drag on swings) sets how
+// long a disturbance takes to die — 1/0.14 ≈ 7 s time constant, so a flick
+// stays visible for ~25-35 s. Angular damping is kept LOW so the slow
+// wheeling of arms about their wires persists; ambient air tops it up.
+const DAMP = { lin: 0.14, ang: 0.16, leafLin: 0.18, leafAng: 0.30 };
+
+const RHO_LEAF = 7.0;            // kg/m² — painted sheet steel, effectively
+const RHO_ROD  = 0.06;           // kg/m  — 3 mm steel wire
+
+const AMBIENT  = 0.9;            // N/m² scale of the room's air (0 = still)
+const BREATH   = 7.0;            // N/m² peak of a held breath
+const DRAG_W   = 60;             // drag spring stiffness, ×mass (rad²/s²)
+
+const CEIL = { x: 0, y: 2.78, z: 0 };   // where the ceiling wire begins
+
+/* ----------------------------------------------------------- tiny utils */
+
+// Deterministic rng so ?seed=N rehangs the exact same sculpture.
+function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0;
+  let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t;
+  return ((t^t>>>14)>>>0)/4294967296; }; }
+const lerp = (a,b,t)=>a+(b-a)*t;
+const V3 = (x=0,y=0,z=0)=>new THREE.Vector3(x,y,z);
+
+// Signed area + centroid of a closed polygon (shoelace) — leaf shapes are
+// sampled outlines, so mass and balance come from the real silhouette.
+function polyAreaCentroid(pts){
+  let a=0, cx=0, cy=0;
+  for(let i=0;i<pts.length;i++){
+    const p=pts[i], q=pts[(i+1)%pts.length], w=p.x*q.y-q.x*p.y;
+    a+=w; cx+=(p.x+q.x)*w; cy+=(p.y+q.y)*w;
+  }
+  a*=0.5;
+  return { area: Math.abs(a), cx: cx/(6*a), cy: cy/(6*a), ccw: a>0 };
+}
+
+/* ------------------------------------------------------- leaf silhouettes
+   Calder's vocabulary: discs, biomorphic blobs, crescents. Each returns a
+   closed outline (array of Vector2, CCW, centered on its centroid) plus a
+   good spot to drill the hanging hole. */
+
+function outlineDisc(r, rng){
+  const n=56, pts=[];
+  const sq = 1 - rng()*0.12;                    // slightly off-round
+  for(let i=0;i<n;i++){ const t=i/n*Math.PI*2;
+    pts.push(new THREE.Vector2(Math.cos(t)*r, Math.sin(t)*r*sq)); }
+  return pts;
+}
+
+function outlineBlob(r, rng){
+  // Low harmonics on a circle give the hand-cut biomorphic edge.
+  const n=64, pts=[];
+  const a2=lerp(.06,.20,rng()), a3=lerp(.04,.15,rng()), a4=lerp(0,.08,rng());
+  const p2=rng()*7, p3=rng()*7, p4=rng()*7;
+  for(let i=0;i<n;i++){ const t=i/n*Math.PI*2;
+    const rr=r*Math.max(.5, 1 + a2*Math.sin(2*t+p2) + a3*Math.sin(3*t+p3) + a4*Math.sin(4*t+p4));
+    pts.push(new THREE.Vector2(Math.cos(t)*rr, Math.sin(t)*rr)); }
+  return pts;
+}
+
+function outlineCrescent(r, rng){
+  // A circle with a bite: cutter of radius rc, offset d along +x.
+  const rc=r*lerp(.70,.85,rng()), d=r*lerp(.48,.62,rng());
+  const phi=Math.acos((r*r+d*d-rc*rc)/(2*r*d));          // rim meets cutter
+  const psi=Math.acos((rc*rc+d*d-r*r)/(2*rc*d));
+  const pts=[], nO=44, nI=30;
+  for(let i=0;i<=nO;i++){ const t=lerp(phi, 2*Math.PI-phi, i/nO);
+    pts.push(new THREE.Vector2(Math.cos(t)*r, Math.sin(t)*r)); }
+  for(let i=1;i<nI;i++){ const t=lerp(2*Math.PI-psi, psi, i/nI);   // bite arc
+    pts.push(new THREE.Vector2(d+Math.cos(t)*rc, Math.sin(t)*rc)); }
+  return pts;
+}
+
+function makeLeafShape(kind, r, rng){
+  let pts = kind==='crescent' ? outlineCrescent(r,rng)
+          : kind==='blob'     ? outlineBlob(r,rng)
+          :                     outlineDisc(r,rng);
+  let g = polyAreaCentroid(pts);
+  if(!g.ccw) pts.reverse();
+  pts = pts.map(p=>new THREE.Vector2(p.x-g.cx, p.y-g.cy));   // centroid at 0
+  // Hole: 60% of the way toward the farthest rim point — always on metal,
+  // and hanging off-centroid is what gives each leaf its cant.
+  let far=pts[0], fd=0;
+  for(const p of pts){ const dd=p.lengthSq(); if(dd>fd){fd=dd; far=p;} }
+  const hole = far.clone().multiplyScalar(0.6);
+  return { pts, area:g.area, hole, maxR: Math.sqrt(fd) };
+}
+
+/* --------------------------------------------------------- mobile design
+   The structure is a spine: each arm carries one leaf (or a small fork of
+   two) on its short side and the rest of the mobile on its long side, the
+   way Calder cascades. All in a data tree first — physics comes later. */
+
+function designMobile(rng){
+  const kinds=['disc','blob','crescent'];
+  const leafKind=()=>kinds[Math.min(2, Math.floor(rng()*3))];
+  // thick > 1 = cut from heavier stock, as Calder did for the big
+  // counterweights that ride close to their pivot on a short lever
+  const mkLeaf=(r, thick=1)=>{
+    const s=makeLeafShape(leafKind(), r, rng);
+    return { type:'leaf', r, ...s, mass: s.area*RHO_LEAF*thick,
+             wireAbove: lerp(.06,.12,rng()) + r*.25, color:null };
+  };
+  // torque balance: heavy child at local 0, light child at L, rod mass at
+  // L/2. Pivot x from  Σ mᵢ(xᵢ−x) = 0  →  the arm hangs dead level.
+  // The rod mass gets a floor relative to its load: a truly wire-light link
+  // between heavy bodies makes the constraint solver ring (mass ratios of
+  // 50:1 across a joint), and the balance math absorbs the extra honestly.
+  const mkArm=(heavy, light, L, wireAbove)=>{
+    const mRod=Math.max(RHO_ROD*L, .22*(heavy.mass+light.mass));
+    const x=(light.mass*L + mRod*L/2)/(heavy.mass+light.mass+mRod);
+    return { type:'arm', L, mRod, x, heavy, light, wireAbove,
+             bow: L*lerp(.04,.075,rng()),
+             mass: heavy.mass+light.mass+mRod };
+  };
+
+  const levels = 5 + (rng()<.5 ? 1 : 0);
+  // Terminal arm: two small leaves, still asymmetric — a symmetric mobile
+  // is a chandelier.
+  let node = mkArm(mkLeaf(lerp(.066,.082,rng())), mkLeaf(lerp(.048,.060,rng())),
+                   lerp(.20,.27,rng()), lerp(.11,.16,rng()));
+  for(let i=levels-2;i>=0;i--){
+    const u=1-i/(levels-2);                          // 1 = top of the spine
+    const rLeaf=lerp(.080,.170,u*u*.4+u*.6);         // the counterweights grow
+    let heavy=mkLeaf(rLeaf*lerp(.92,1.08,rng()),     //   toward the top pivot
+                     lerp(1.2,1.7,u));
+    if(i>0 && i<levels-2 && rng()<.5)                // occasional small fork
+      heavy=mkArm(mkLeaf(lerp(.055,.070,rng())), mkLeaf(lerp(.042,.055,rng())),
+                  lerp(.15,.20,rng()), lerp(.09,.13,rng()));
+    node=mkArm(heavy, node, lerp(.30,.36,rng())+u*lerp(.22,.30,rng()),
+               i===0 ? lerp(.42,.55,rng()) : lerp(.12,.19,rng()));
+  }
+
+  // Paint: mostly black and vermilion, exactly one yellow and one blue,
+  // and they go on the smaller leaves — Calder let color be the accent.
+  const leaves=[]; (function walk(n){ if(n.type==='leaf') leaves.push(n);
+    else { walk(n.heavy); walk(n.light); } })(node);
+  const bySize=[...leaves].sort((a,b)=>b.r-a.r);
+  for(const lf of bySize) lf.color = rng()<.48 ? PAL.red : PAL.black;
+  bySize[0].color = rng()<.55 ? PAL.red : PAL.black;
+  const small=bySize.slice(Math.ceil(bySize.length/2));
+  const yi=Math.floor(rng()*small.length);
+  small[yi].color=PAL.yellow;
+  small[(yi+1+Math.floor(rng()*(small.length-1)))%small.length].color=PAL.blue;
+  return node;
+}
+
+/* ------------------------------------------------------------ the room */
+
+const canvas=document.getElementById('c');
+let renderer;
+try{
+  renderer=new THREE.WebGLRenderer({canvas, antialias:true, alpha:false, powerPreference:'high-performance'});
+}catch(e){
+  document.getElementById('nogl').style.display='flex';
+  throw e;
+}
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFShadowMap;      // + shadow.radius = soft edge
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.12;
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(PAL.bg);
+
+const camera=new THREE.PerspectiveCamera(36, 1, .1, 40);
+function frameCamera(){
+  const aspect=innerWidth/innerHeight;
+  camera.aspect=aspect;
+  // dolly back on narrow screens so the whole sculpture stays in frame
+  const dist=Math.max(3.35, 1.06/(Math.tan(camera.fov*Math.PI/360)*aspect));
+  camera.position.set(.14, 1.36, dist);
+  camera.lookAt(0, 1.64, 0);
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', ()=>{ frameCamera();
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2)); });
+frameCamera();
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+
+scene.add(new THREE.HemisphereLight(0xfffdf6, 0xb6ad9c, .85));
+const sun=new THREE.DirectionalLight(0xfff3e0, 2.3);
+sun.position.set(2.3, 3.1, 2.9);
+sun.target.position.set(0, 1.7, 0);
+sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.left=-2.3; sun.shadow.camera.right=2.3;
+sun.shadow.camera.top=2.3;   sun.shadow.camera.bottom=-2.3;
+sun.shadow.camera.near=.5;   sun.shadow.camera.far=10;
+sun.shadow.bias=-0.0004; sun.shadow.normalBias=.012; sun.shadow.radius=5;
+scene.add(sun, sun.target);
+
+const wall=new THREE.Mesh(new THREE.PlaneGeometry(14,8),
+  new THREE.MeshStandardMaterial({color:PAL.wall, roughness:.96, metalness:0}));
+wall.position.set(0, 2.2, -1.18); wall.receiveShadow=true; scene.add(wall);
+const floor=new THREE.Mesh(new THREE.PlaneGeometry(16,10),
+  new THREE.MeshStandardMaterial({color:PAL.floor, roughness:.94, metalness:0}));
+floor.rotation.x=-Math.PI/2; floor.receiveShadow=true; scene.add(floor);
+
+const rodMat=new THREE.MeshStandardMaterial({color:PAL.black, roughness:.55, metalness:.15});
+const leafMats={};
+for(const k of ['black','red','yellow','blue'])
+  leafMats[PAL[k]]=new THREE.MeshStandardMaterial({color:PAL[k], roughness:.8, metalness:.04});
+const proxyMat=new THREE.MeshBasicMaterial({visible:false});   // fat, invisible grab targets
+
+/* ------------------------------------------------------------- hang it
+   Every connection is a spherical (ball) joint — the joint system is the
+   quietly beautiful part of a physics engine, and it is what lets a mobile
+   swing, twist and wheel all at once. Each hanging wire is modeled as a
+   rigid, massless extension of its child, pivoting at the parent's tip:
+   exactly a stiff wire through a loop. */
+
+let world=null, mobile=null, phase=0;
+
+function buildWorld(){
+  const w=new RAPIER.World({x:0, y:-G, z:0});
+  w.timestep=DT;
+  if('numSolverIterations' in w) w.numSolverIterations=8;
+  // room, so a dragged leaf can't sail through the architecture
+  const fixed=w.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+  w.createCollider(RAPIER.ColliderDesc.cuboid(8,4,.05).setTranslation(0,2.2,-1.23), fixed);
+  w.createCollider(RAPIER.ColliderDesc.cuboid(8,.05,6).setTranslation(0,-.05,0), fixed);
+  return w;
+}
+
+function buildMobile(seed){
+  const rng=mulberry32(seed);
+  const spec=designMobile(rng);
+  const group=new THREE.Group();
+  const recs=[], leaves=[], hitTargets=[];
+  const wireEnds=[];                       // pairs of {rec|null, local} to join
+  const loopGeo=new THREE.SphereGeometry(.0048, 10, 8);
+
+  const ceiling=world.createRigidBody(
+    RAPIER.RigidBodyDesc.fixed().setTranslation(CEIL.x, CEIL.y, CEIL.z));
+
+  function makeRecord(body, mesh){
+    const t=body.translation(), q=body.rotation();
+    const rec={ body, mesh,
+      pP:V3(t.x,t.y,t.z), pQ:new THREE.Quaternion(q.x,q.y,q.z,q.w),
+      cP:V3(t.x,t.y,t.z), cQ:new THREE.Quaternion(q.x,q.y,q.z,q.w) };
+    recs.push(rec); mesh.userData.rec=rec; mesh.matrixAutoUpdate=false;
+    group.add(mesh);
+    return rec;
+  }
+
+  // anchorWorld: parent tip in world space (rest pose). Returns the record.
+  function instantiate(node, parentBody, parentRec, parentAnchorLocal, anchorWorld, yaw){
+    if(node.type==='leaf') {
+      // rest orientation: the leaf settles so its centroid hangs directly
+      // under the wire — computed here so it spawns already at peace.
+      const hole=V3(node.hole.x, 0, -node.hole.y);          // shape xy → plate xz
+      const anchor=hole.clone().add(V3(0,node.wireAbove,0));
+      const q=new THREE.Quaternion().setFromUnitVectors(anchor.clone().normalize(), V3(0,1,0));
+      const pos=anchorWorld.clone().sub(anchor.clone().applyQuaternion(q));
+      const body=world.createRigidBody(RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(pos.x,pos.y,pos.z).setRotation({x:q.x,y:q.y,z:q.z,w:q.w})
+        .setLinearDamping(DAMP.leafLin).setAngularDamping(DAMP.leafAng)
+        .setCanSleep(false).setCcdEnabled(true));
+      // A fat cylinder stands in for the silhouette. (A convex hull of the
+      // real outline was tried and looked righter on paper — but 4 mm-thin
+      // hull contacts make the solver ring until it explodes. Plates that
+      // occasionally overlap a rim by a centimetre are the better lie.)
+      world.createCollider(RAPIER.ColliderDesc.cylinder(.004, node.maxR*.9)
+        .setMass(node.mass).setFriction(.5).setRestitution(.2), body);
+      world.createImpulseJoint(RAPIER.JointData.spherical(
+        parentAnchorLocal, {x:anchor.x,y:anchor.y,z:anchor.z}), parentBody, body, true);
+
+      const shape=new THREE.Shape(node.pts);
+      const geo=new THREE.ExtrudeGeometry(shape, {depth:.004, bevelEnabled:true,
+        bevelThickness:.0012, bevelSize:.0012, bevelSegments:2});
+      geo.translate(0,0,-.002); geo.rotateX(-Math.PI/2);
+      const mesh=new THREE.Mesh(geo, leafMats[node.color]);
+      mesh.castShadow=true;
+      const rivet=new THREE.Mesh(loopGeo, rodMat); rivet.position.copy(hole);
+      mesh.add(rivet);
+      const rec=makeRecord(body, mesh);
+      rec.holeLocal=hole; rec.area=node.area; rec.mass=node.mass;
+      rec.phase=rng()*Math.PI*2;
+      leaves.push(rec); hitTargets.push(mesh);
+      wireEnds.push({parentRec, parentLocal:parentAnchorLocal,
+                     worldA:anchorWorld.clone(), recB:rec, localB:hole});
+      return rec;
+    }
+
+    // --- arm ---
+    const {L, x, bow}=node;
+    const e0=V3(-x,0,0), e1=V3(L-x,0,0);                 // heavy tip, light tip
+    const ctrl=V3(L/2-x, bow, 0);
+    const curve=new THREE.QuadraticBezierCurve3(e0, ctrl, e1);
+    // where the rod crosses x=0 (the balance point), find the loop's height
+    let lo=0, hi=1;
+    for(let i=0;i<24;i++){ const m=(lo+hi)/2; if(curve.getPoint(m).x<0) lo=m; else hi=m; }
+    const loopY=curve.getPoint((lo+hi)/2).y;
+    const anchor=V3(0, loopY+node.wireAbove, 0);
+
+    const qy=new THREE.Quaternion().setFromAxisAngle(V3(0,1,0), yaw);
+    const pos=anchorWorld.clone().sub(anchor.clone().applyQuaternion(qy));
+    // Inertia is set by hand: a 3.5 mm capsule's inertia about its own axis
+    // is ~1e-7, and the solver rings against a nearly-free twist axis. We
+    // keep the honest rod mass but refuse to give it any degenerate axis.
+    const Ip=node.mRod*L*L/12;
+    const body=world.createRigidBody(RAPIER.RigidBodyDesc.dynamic()
+      .setTranslation(pos.x,pos.y,pos.z).setRotation({x:qy.x,y:qy.y,z:qy.z,w:qy.w})
+      .setLinearDamping(DAMP.lin).setAngularDamping(DAMP.ang).setCanSleep(false)
+      .setAdditionalMassProperties(node.mRod, {x:L/2-x, y:0, z:0},
+        {x:Ip*.5, y:Ip, z:Ip}, {x:0,y:0,z:0,w:1}));
+    const zq={x:0,y:0,z:Math.SQRT1_2,w:Math.SQRT1_2};    // capsule lies along x
+    world.createCollider(RAPIER.ColliderDesc.capsule(Math.max(.01,L/2-.004), .0035)
+      .setTranslation(L/2-x, 0, 0).setRotation(zq)
+      .setDensity(0).setFriction(.5).setRestitution(.2), body);
+    world.createImpulseJoint(RAPIER.JointData.spherical(
+      parentAnchorLocal, {x:0,y:anchor.y,z:0}), parentBody, body, true);
+
+    const tube=new THREE.Mesh(new THREE.TubeGeometry(curve, 24, .0023, 7), rodMat);
+    tube.castShadow=true;
+    for(const p of [e0, e1, V3(0,loopY,0)]){
+      const s=new THREE.Mesh(loopGeo, rodMat); s.position.copy(p); tube.add(s); }
+    const proxy=new THREE.Mesh(new THREE.CylinderGeometry(.02,.02,L,6), proxyMat);
+    proxy.rotation.z=Math.PI/2; proxy.position.set(L/2-x, 0, 0); tube.add(proxy);
+    hitTargets.push(proxy);
+    const rec=makeRecord(body, tube);
+    wireEnds.push({parentRec, parentLocal:parentAnchorLocal,
+                   worldA:anchorWorld.clone(), recB:rec, localB:V3(0,loopY,0)});
+
+    // children hang from the tips; successive levels step around the
+    // golden angle so the cascade spirals instead of stacking
+    const tipHeavyW=pos.clone().add(e0.clone().applyQuaternion(qy));
+    const tipLightW=pos.clone().add(e1.clone().applyQuaternion(qy));
+    instantiate(node.heavy, body, rec, {x:e0.x,y:0,z:0}, tipHeavyW, yaw+2.4+(rng()-.5));
+    instantiate(node.light, body, rec, {x:e1.x,y:0,z:0}, tipLightW, yaw-2.4+(rng()-.5));
+    return rec;
+  }
+
+  const topRec=instantiate(spec, ceiling, null, {x:0,y:0,z:0}, V3(CEIL.x,CEIL.y,CEIL.z), rng()*Math.PI*2);
+
+  // ceiling stub + all hanging wires in one hairline batch
+  const wireGeo=new THREE.BufferGeometry();
+  wireGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(wireEnds.length*6), 3));
+  const wiresMesh=new THREE.LineSegments(wireGeo,
+    new THREE.LineBasicMaterial({color:PAL.wire, transparent:true, opacity:.5}));
+  wiresMesh.frustumCulled=false;
+  group.add(wiresMesh);
+  const hook=new THREE.Mesh(loopGeo, rodMat); hook.position.set(CEIL.x,CEIL.y,CEIL.z);
+  group.add(hook);
+
+  scene.add(group);
+  return { group, recs, leaves, hitTargets, wireEnds, wiresMesh, topRec, seed };
+}
+
+/* ----------------------------------------------- wires follow the bodies */
+
+const _p=V3(), _q=new THREE.Quaternion(), _a=V3(), _b=V3();
+function updateWires(alpha){
+  const pos=mobile.wiresMesh.geometry.attributes.position;
+  mobile.wireEnds.forEach((w,i)=>{
+    // top end: the parent's tip (or the fixed ceiling hook)
+    if(w.parentRec){ pointOf(w.parentRec, w.parentLocal, alpha, _a); }
+    else _a.copy(w.worldA);
+    pointOf(w.recB, w.localB, alpha, _b);
+    pos.setXYZ(i*2, _a.x,_a.y,_a.z); pos.setXYZ(i*2+1, _b.x,_b.y,_b.z);
+  });
+  pos.needsUpdate=true;
+}
+function pointOf(rec, local, alpha, out){
+  _p.lerpVectors(rec.pP, rec.cP, alpha);
+  _q.slerpQuaternions(rec.pQ, rec.cQ, alpha);
+  return out.copy(local).applyQuaternion(_q).add(_p);
+}
+
+/* -------------------------------------------------------------- the air
+   A real room is never still. Two drifting sine fields give each leaf its
+   own slow conversation with the air; prefers-reduced-motion stills it. */
+
+const reduceMotion=matchMedia('(prefers-reduced-motion: reduce)');
+let simT=0;
+function ambientForces(){
+  if(reduceMotion.matches || AMBIENT===0) return;
+  const th=simT*.013 + .4*Math.sin(simT*.021+1.7);
+  const gust=Math.max(0, Math.sin(simT*.0157+2))**2 * .75 + .25;
+  for(const lf of mobile.leaves){
+    const s=.55+.45*Math.sin(simT*.23+lf.phase);
+    const f=lf.area*AMBIENT*gust*s;
+    const F={x:Math.cos(th+lf.phase*.3)*f, y:.15*f*Math.sin(simT*.11+lf.phase), z:Math.sin(th+lf.phase*.3)*f};
+    const p=pointOf(lf, lf.holeLocal, 1, _a);
+    lf.body.addForceAtPoint(F, {x:p.x,y:p.y,z:p.z}, true);
+  }
+}
+
+/* -------------------------------------------------------- touch and breath */
+
+const raycaster=new THREE.Raycaster();
+const pointers=new Map();          // pointerId → drag or breath
+const breathEl=document.getElementById('breath');
+const ndc=new THREE.Vector2();
+
+function rayFromEvent(e){
+  ndc.set(e.clientX/innerWidth*2-1, -(e.clientY/innerHeight)*2+1);
+  raycaster.setFromCamera(ndc, camera);
+  return raycaster.ray;
+}
+
+canvas.addEventListener('pointerdown', e=>{
+  e.preventDefault();
+  document.getElementById('label').classList.add('gone');
+  const ray=rayFromEvent(e);
+  const hits=raycaster.intersectObjects(mobile.hitTargets, true);
+  if(hits.length){
+    let obj=hits[0].object; while(obj && !obj.userData.rec) obj=obj.parent;
+    const rec=obj.userData.rec;
+    const grabLocal=hits[0].point.clone().sub(rec.cP).applyQuaternion(_q.copy(rec.cQ).invert());
+    const plane=new THREE.Plane().setFromNormalAndCoplanarPoint(
+      camera.getWorldDirection(V3()).negate(), hits[0].point);
+    pointers.set(e.pointerId, {mode:'drag', rec, grabLocal, plane,
+      target:hits[0].point.clone()});
+  }else{
+    pointers.set(e.pointerId, {mode:'breath', ray:{o:ray.origin.clone(), d:ray.direction.clone()},
+      t0:performance.now(), x:e.clientX, y:e.clientY});
+    breathEl.style.display='block'; breathEl.classList.add('on');
+    breathEl.style.left=e.clientX+'px'; breathEl.style.top=e.clientY+'px';
+  }
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', e=>{
+  const p=pointers.get(e.pointerId); if(!p) return;
+  const ray=rayFromEvent(e);
+  if(p.mode==='drag'){
+    const hit=V3();
+    if(ray.intersectPlane(p.plane, hit)){
+      // keep the hand inside the room
+      hit.y=Math.min(2.7, Math.max(.12, hit.y));
+      const c=V3(0,1.7,0); const d=hit.clone().sub(c);
+      if(d.length()>1.7) hit.copy(c).add(d.setLength(1.7));
+      p.target.copy(hit);
+    }
+  }else{
+    p.ray.o.copy(ray.origin); p.ray.d.copy(ray.direction);
+    p.x=e.clientX; p.y=e.clientY;
+    breathEl.style.left=e.clientX+'px'; breathEl.style.top=e.clientY+'px';
+  }
+});
+function endPointer(e){
+  const p=pointers.get(e.pointerId);
+  if(p && p.mode==='breath'){ breathEl.style.display='none'; breathEl.classList.remove('on'); }
+  pointers.delete(e.pointerId);
+}
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
+canvas.addEventListener('contextmenu', e=>e.preventDefault());
+
+function interactionForces(){
+  for(const p of pointers.values()){
+    if(p.mode==='drag'){
+      const rec=p.rec, m=rec.body.mass();
+      const grabW=pointOf(rec, p.grabLocal, 1, _a);
+      // spring to the pointer, not a kinematic pin: springs can't teleport
+      // the sculpture into an explosion, they just insist politely
+      const k=DRAG_W*m, c=1.7*Math.sqrt(DRAG_W)*m;
+      const v=rec.body.linvel();
+      const F=_b.copy(p.target).sub(grabW).multiplyScalar(k)
+        .sub(V3(v.x*c, v.y*c, v.z*c));
+      const fmax=m*45; if(F.length()>fmax) F.setLength(fmax);
+      rec.body.addForceAtPoint({x:F.x,y:F.y,z:F.z}, {x:grabW.x,y:grabW.y,z:grabW.z}, true);
+    }else{
+      const ramp=Math.min(1,(performance.now()-p.t0)/450);
+      if(ramp<=0) continue;
+      for(const lf of mobile.leaves){
+        const c=lf.cP; _a.copy(c).sub(p.ray.o);
+        const along=_a.dot(p.ray.d); if(along<.3||along>8) continue;
+        _b.copy(p.ray.d).multiplyScalar(along); _a.sub(_b);     // ⊥ offset
+        const g=Math.exp(-(_a.lengthSq())/(2*.42*.42));
+        if(g<.01) continue;
+        const flutter=.8+.2*Math.sin(simT*11+lf.phase);
+        const f=lf.area*BREATH*g*ramp*flutter;
+        lf.body.addForce({x:p.ray.d.x*f, y:p.ray.d.y*f, z:p.ray.d.z*f}, true);
+      }
+    }
+  }
+}
+
+/* --------------------------------------------------------------- loop */
+
+let acc=0, lastT=performance.now(), fpsEMA=60;
+function stepPhysics(){
+  for(const r of mobile.recs){ r.body.resetForces(false); r.body.resetTorques(false); }
+  ambientForces();
+  interactionForces();
+  world.step();
+  simT+=DT;
+  for(const r of mobile.recs){
+    r.pP.copy(r.cP); r.pQ.copy(r.cQ);
+    const t=r.body.translation(), q=r.body.rotation();
+    r.cP.set(t.x,t.y,t.z); r.cQ.set(q.x,q.y,q.z,q.w);
+    // seatbelt: a wild drag can't fling the physics into orbit
+    const v=r.body.linvel(), sp=Math.hypot(v.x,v.y,v.z);
+    if(sp>7) r.body.setLinvel({x:v.x*7/sp, y:v.y*7/sp, z:v.z*7/sp}, true);
+  }
+}
+function frame(now){
+  const dt=Math.min((now-lastT)/1000, .1); lastT=now;
+  fpsEMA=lerp(fpsEMA, 1/Math.max(dt,1e-4), .05);
+  acc+=dt;
+  while(acc>=DT){ stepPhysics(); acc-=DT; }
+  const alpha=acc/DT;
+  for(const r of mobile.recs){
+    _p.lerpVectors(r.pP, r.cP, alpha);
+    _q.slerpQuaternions(r.pQ, r.cQ, alpha);
+    r.mesh.matrix.compose(_p, _q, r.mesh.scale);
+  }
+  updateWires(alpha);
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+
+/* ------------------------------------------------------------- curtain up */
+
+function disposeMobile(){
+  if(!mobile) return;
+  scene.remove(mobile.group);
+  mobile.group.traverse(o=>{ if(o.geometry) o.geometry.dispose(); });
+  mobile=null;
+}
+
+function hang(seed){
+  disposeMobile();
+  if(world) world.free();
+  world=buildWorld();
+  mobile=buildMobile(seed);
+  simT=0;
+  // a first breath, so you arrive mid-drift — unless the visitor asked
+  // for stillness
+  if(!reduceMotion.matches){
+    mobile.topRec.body.setAngvel({x:0, y:.35, z:0}, true);
+    const lf=mobile.leaves[mobile.leaves.length-1];
+    lf.body.applyImpulse({x:.12*lf.mass, y:0, z:.06*lf.mass}, true);
+  }
+}
+
+const params=new URLSearchParams(location.search);
+let seed=params.has('seed') ? (+params.get('seed')|0) : (Math.random()*2**31)|0;
+
+document.getElementById('rehang').addEventListener('click', ()=>{
+  canvas.classList.add('dim');
+  setTimeout(()=>{ seed=(Math.random()*2**31)|0; hang(seed); canvas.classList.remove('dim'); }, 360);
+});
+
+try{
+  await RAPIER.init();
+}catch(err){
+  const el=document.getElementById('nogl');
+  el.textContent='poise could not wake its physics engine.';
+  el.style.display='flex';
+  throw err;
+}
+hang(seed);
+requestAnimationFrame(t=>{ lastT=t; requestAnimationFrame(frame); });
+
+// quiet hatch for tests and curious readers (see .claude/skills/verify)
+window.poise={
+  get seed(){ return seed; },
+  get world(){ return world; }, get recs(){ return mobile.recs; },
+  get leaves(){ return mobile.leaves; }, get fpsEMA(){ return fpsEMA; },
+  get ambient(){ return reduceMotion.matches ? 0 : AMBIENT; },
+  maxVel(){ let m=0; for(const r of mobile.recs){ const a=r.body.angvel(), l=r.body.linvel();
+    m=Math.max(m, Math.hypot(a.x,a.y,a.z), Math.hypot(l.x,l.y,l.z)); } return m; },
+  kick(s=1){ const lf=mobile.leaves[0];
+    lf.body.applyImpulse({x:.3*lf.mass*s, y:0, z:.15*lf.mass*s}, true); },
+  screenPoint(i){ const p=mobile.leaves[i].cP.clone().project(camera);
+    return { x:(p.x+1)/2*innerWidth, y:(1-p.y)/2*innerHeight }; },
+  rehang(s){ hang(s===undefined ? seed : (seed=s|0)); },
+  ready:true,
+};
+</script>
+</body>
+</html>
