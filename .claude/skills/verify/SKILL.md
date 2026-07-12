@@ -5,7 +5,7 @@ description: How to build/launch/drive this repo's toys for runtime verification
 
 # Verifying the toys
 
-Static site, no build step. Every toy is a self-contained HTML file (`ink/ink.html`, `alchemy/alchemy.html`) linked from `index.html`.
+Static site, no build step. Every toy is a self-contained HTML file (`ink/ink.html`, `alchemy/alchemy.html`, `murmuration/murmuration.html`) linked from `index.html`. Murmuration vendors Three.js next to itself (`three.module.min.js` + `three.core.min.js` — the min build imports the core file; both must be present).
 
 ## Launch
 
@@ -24,7 +24,7 @@ chromium.launch({
 })
 ```
 
-WebGL (ink) and Canvas2D (alchemy) both work under SwiftShader.
+WebGL (ink), Canvas2D (alchemy), and Three.js/WebGL2 (murmuration) all work under SwiftShader.
 
 ## Drive
 
@@ -33,6 +33,7 @@ WebGL (ink) and Canvas2D (alchemy) both work under SwiftShader.
 - Top-level `const`s in the toys are global lexical bindings, reachable from `page.evaluate`: `params`, `parts`, `rings`, `SYMS`, `spriteCache`, `fpsEMA` (alchemy); `params` (ink). Use them to assert spawn counts, glyph filtering, and adaptive budget.
 - Settings: `#gear` opens `#panel`; any canvas pointerdown closes it (by design — reopen before touching sliders). Sliders need a manual `input` event after `fill`.
 - Fusion probe (alchemy): scribble tight circles in one spot for a few seconds, then watch for `rings.some(r => r.col === '190,140,255')`.
+- Murmuration is a module script, so nothing is a global lexical binding; its hatch is `window.murm` (`params`, `pos`/`vel` typed arrays, `centroid`, `pred`, getters `fpsEMA`/`budget`/`active`/`strike`/`predW`, `reseed()`). Wait for `window.murm && murm.active > 0`, assert motion by sampling `pos` twice, click to see `strike` jump to 1 then decay, and `predW` rise after `pointermove`.
 
 ## Gotchas
 
