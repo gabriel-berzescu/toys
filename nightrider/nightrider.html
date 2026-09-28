@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<!-- night rider — a two-lane freeway that plays synthwave. Brief by Gabriel, built by Claude. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>night rider</title>
+<link rel="icon" href="data:,">
+<style>
+  :root{
+    --bg:#06030c;
+    --mag:#ff2bd6;
+    --cyan:#22e6ff;
+    --red:#ff2a3a;
+    --dim:#8f88a8;
+    --text:#efe9ff;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);
+    font-family:ui-monospace,'Cascadia Code','JetBrains Mono',Menlo,monospace;
+    -webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  #c{position:fixed;inset:0;width:100%;height:100%;touch-action:none;display:block}
+
+  /* the title card: chrome and neon, gone after the first touch */
+  #start{position:fixed;inset:0;z-index:5;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:1.4rem;cursor:pointer;transition:opacity .9s ease;
+    background:radial-gradient(80% 60% at 50% 60%, rgba(60,10,70,.55), rgba(6,3,12,.75) 70%)}
+  #start.gone{opacity:0;pointer-events:none}
+  #start h1{font-family:Impact,'Arial Black','Helvetica Neue',Arial,sans-serif;font-style:italic;font-weight:900;
+    font-size:clamp(46px,13vw,124px);letter-spacing:.04em;line-height:.92;text-align:center;padding:0 .2em}
+  #start h1 .n{display:block;
+    background:linear-gradient(180deg,#fff8dc 0%,#ffd45c 36%,#a4500a 50%,#ffcf4a 55%,#fff3c4 100%);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+    filter:drop-shadow(0 0 18px rgba(255,190,70,.35))}
+  #start h1 .r{display:block;color:transparent;-webkit-text-stroke:2px var(--mag);
+    text-shadow:0 0 14px rgba(255,43,214,.75),0 0 44px rgba(255,43,214,.35)}
+  #start p{font-size:11.5px;letter-spacing:.32em;color:var(--dim);animation:blink 2.4s ease-in-out infinite;text-align:center;line-height:2}
+  @keyframes blink{50%{opacity:.35}}
+
+  /* museum label: appears, breathes once, and gets out of the way */
+  #label{position:fixed;left:max(20px, env(safe-area-inset-left));top:max(18px, env(safe-area-inset-top));
+    pointer-events:none;opacity:0}
+  #label.show{animation:label 13s ease forwards}
+  #label h1{font-size:13px;font-weight:400;letter-spacing:.36em;color:var(--mag);text-shadow:0 0 9px rgba(255,43,214,.6)}
+  #label p{font-size:11px;letter-spacing:.08em;color:var(--dim);margin-top:.55em;line-height:1.7}
+  @keyframes label{0%{opacity:0}7%{opacity:1}74%{opacity:1}100%{opacity:0}}
+
+  #hud{position:fixed;right:max(20px, env(safe-area-inset-right));top:max(18px, env(safe-area-inset-top));
+    font-size:11px;letter-spacing:.26em;color:var(--dim);text-align:right;pointer-events:none;line-height:1.9}
+  #hud b{font-weight:400;color:var(--cyan);text-shadow:0 0 8px rgba(34,230,255,.6);display:inline-block}
+  #hud b.pop{animation:pop .32s ease}
+  @keyframes pop{35%{transform:scale(1.4)}}
+  #hud .crash{color:var(--red);text-shadow:0 0 8px rgba(255,42,58,.7)}
+
+  /* the dashboard: KITT's console, repurposed as a mixer */
+  #dash{position:fixed;left:0;right:0;bottom:0;z-index:3;display:flex;align-items:flex-end;justify-content:center;gap:8px;
+    padding:14px 12px max(12px, env(safe-area-inset-bottom));
+    background:linear-gradient(180deg, rgba(6,3,12,0), rgba(6,3,12,.88) 45%)}
+  .tg{border:1px solid rgba(255,43,214,.26);background:rgba(10,4,16,.72);color:rgba(255,43,214,.5);
+    font:inherit;font-size:10px;letter-spacing:.22em;padding:9px 0;width:66px;border-radius:6px;cursor:pointer;
+    transition:color .15s,border-color .15s,box-shadow .15s;-webkit-tap-highlight-color:transparent}
+  .tg.on{color:#ffd9f6;border-color:var(--mag);box-shadow:0 0 12px rgba(255,43,214,.45),inset 0 0 10px rgba(255,43,214,.22);
+    text-shadow:0 0 8px rgba(255,43,214,.9)}
+  @media (hover:hover){ .tg:hover{border-color:rgba(255,43,214,.7);color:#ffd9f6} }
+  #vb{display:flex;flex-direction:column;align-items:center;gap:3px;margin:0 6px}
+  #vbc{width:84px;height:44px;display:block}
+  #prog{border:0;background:none;color:var(--cyan);font:inherit;font-size:9.5px;letter-spacing:.28em;cursor:pointer;
+    padding:3px 8px;text-shadow:0 0 8px rgba(34,230,255,.6);-webkit-tap-highlight-color:transparent}
+  #prog:focus-visible,.tg:focus-visible{outline:1px solid var(--cyan);outline-offset:2px}
+  @media (max-width:420px){ .tg{width:56px;font-size:9px;letter-spacing:.14em;padding:8px 0} #vbc{width:72px} #vb{margin:0 2px} }
+
+  #nogl{position:fixed;inset:0;display:none;align-items:center;justify-content:center;text-align:center;
+    padding:2rem;color:var(--dim);font-size:13px;letter-spacing:.08em;line-height:1.9}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="start"><h1><span class="n">NIGHT</span><span class="r">RIDER</span></h1><p id="startp">press any key &middot; tap to start</p></div>
+<div id="label"><h1>night rider</h1><p id="labelp"></p></div>
+<div id="hud">streak <b id="streak">0</b><br>best <b id="best">0</b></div>
+<div id="dash">
+  <button class="tg on" data-layer="drums">DRUMS</button>
+  <button class="tg on" data-layer="bass">BASS</button>
+  <div id="vb"><canvas id="vbc"></canvas><button id="prog" aria-label="cycle chord progression">ANTHEM</button></div>
+  <button class="tg on" data-layer="arp">ARP</button>
+  <button class="tg on" data-layer="pad">PAD</button>
+</div>
+<div id="nogl">night rider needs WebGL for its freeway.</div>
+
+<script type="module">
+import * as THREE from './three.module.min.js';
+
+/* ============================================================================
+   night rider — a two-lane freeway that plays synthwave.
+
+   Everything runs on one clock: the audio clock. The road's dashes pass at
+   one per beat, the light poles at one per two beats, and every car in the
+   slow lane is scheduled to reach you exactly on a sixteenth-note. Each car
+   carries a note of the bar's chord (its colour is its pitch class). Pass it
+   and the note plays; the later you swerve, the brighter and louder it is.
+   Hit it and the mix collapses for a bar. Tap the road to play a lead over
+   the top. The dashboard is KITT's console, repurposed as a mixer.
+
+   Rendering: Three.js into a render target, then a two-level bloom and a
+   composite pass (chromatic aberration, scanlines, glitch on impact).
+   Audio: Web Audio only, synthesised live; no samples.
+============================================================================ */
+
+/* ---------------------------------------------------------------- tuning */
+
+const BPM   = 112;
+const BEAT  = 60 / BPM, STEP = BEAT / 4, BAR = BEAT * 4;
+const DASH  = 16;                       // m of road per dash cycle = one beat
+const SPEED = DASH / BEAT;              // ≈ 29.9 m/s, fixed; the road is the metronome
+const TRAFFIC_V = 12;                   // m/s, the slow lane
+const REL   = SPEED - TRAFFIC_V;        // closing speed, m/s
+const VIS   = 270;                      // m, where traffic emerges from the fog
+const LANE_X = [1.8, -1.8];             // lane 1 (right, traffic), lane 2 (left, always empty)
+const SWERVE = 0.32;                    // s, a lane change
+const HIT_DX = 1.5, HIT_DZ = 4.2;       // collision box (cars are 1.9 × 4.4)
+const KEY   = 45;                       // A2. Bass an octave down, pads/arp up, lead two up.
+const I0    = 0.45;                     // starting intensity (0 = muffled, 1 = wide open)
+const MAXCARS = 24;
+
+/* ----------------------------------------------------------- tiny utils */
+
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp  = (a, b, t) => a + (b - a) * t;
+const mtof  = m => 440 * Math.pow(2, (m - 69) / 12);
+const easeOut = t => 1 - Math.pow(1 - t, 3);
+function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0;
+  let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t;
+  return ((t^t>>>14)>>>0)/4294967296; }; }
+const qs = new URLSearchParams(location.search);
+const seed = qs.has('seed') ? (parseInt(qs.get('seed'), 10) | 0) : (Date.now() & 0x7fffffff);
+const rng = mulberry32(seed);
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+const coarse = matchMedia('(pointer: coarse)').matches;
+
+/* ---------------------------------------------------------- music theory */
+
+// Chords as (root semitone relative to A, four voicing tones). The key is A
+// minor throughout; the roots are chosen so every bass note sits in one octave.
+const CH = (name, root, tones) => ({ name, root, tones });
+const M7=[0,3,7,10], MA7=[0,4,7,11], D7=[0,4,7,10], SIX=[0,4,7,9];
+const PROGS = [
+  { name:'ANTHEM', chords:[CH('Am',0,M7), CH('F',-4,MA7), CH('C',3,MA7),  CH('G',-2,SIX)] },
+  { name:'DRIVE',  chords:[CH('Am',0,M7), CH('G',-2,SIX), CH('F',-4,MA7), CH('G',-2,D7)] },
+  { name:'NOIR',   chords:[CH('Am',0,M7), CH('Dm',5,M7),  CH('F',-4,MA7), CH('E7',7,D7)] },
+  { name:'RISE',   chords:[CH('F',-4,MA7), CH('G',-2,SIX), CH('Am',0,M7), CH('C',3,MA7)] },
+];
+const PENTA2 = [0,3,5,7,10,12,15,17];           // A minor pentatonic, 8 columns of road
+// Pitch class → neon hue. Cyan A, magenta C, violet D, amber E, pink G.
+const HUES = {9:190, 0:305, 2:265, 4:45, 7:330, 11:160, 5:215, 8:20, 1:280, 3:120, 6:240, 10:350};
+const hueOf = midi => HUES[((midi % 12) + 12) % 12];
+
+const ARPS = [
+  [0,1,2,3,4,5,6,7,0,1,2,3,4,5,6,7],
+  [0,1,2,3,4,5,6,7,7,6,5,4,3,2,1,0],
+  [0,4,2,6,1,5,3,7,0,4,2,6,1,5,3,7],
+  [0,2,4,6,7,6,4,2,0,2,4,6,7,5,3,1],
+  [0,0,4,0,2,0,4,0,0,0,4,0,2,4,6,4],
+];
+const BASSP = [
+  [0,0,12,0, 0,0,12,0, 0,0,12,0, 0,12,0,12],                         // the octave gallop
+  [0,null,0,null, 0,null,0,null, 0,null,0,null, 0,null,7,null],       // eighths, a fifth to turn
+];
+// Traffic phrases: four bars of sixteenth-step offsets. A car per offset.
+const PH = {
+  intro: [ [[0],[],[0],[]], [[0],[],[8],[]], [[0],[8],[0],[]], [[8],[],[0],[8]] ],
+  mid:   [ [[0],[0,8],[0],[0,8]], [[0,8],[0,8],[4,12],[0]], [[0],[6],[0,8],[]], [[0,8],[],[0,8],[8]], [[0,4],[8],[0,4],[8,12]], [[0],[0,6],[0],[0,10]] ],
+  hot:   [ [[0,4,8],[],[0,2,4,6],[]], [[0,8],[0,8],[0,4,8,12],[]], [[0,2,4,6],[8],[0,2,4,6],[8,12]], [[0,6],[0,6],[0,6],[0,4,8,12]], [[0,4,8,12],[0],[0,4,8,12],[8]] ],
+};
+const MOTIFS = [[0,2,4,2],[0,1,2,3,4,5],[4,2,0,2],[0,4,3,1],[2,4,5,4,2,0],[0,0,4,5],[5,4,2,4]];
+
+/* ----------------------------------------------------------- the synth */
+
+// Pure Web Audio. makeEngine() takes any BaseAudioContext so the same code
+// renders offline for tests. Buses: drums → bus; music (bass, arp, pad) →
+// sidechain duck → bus; lead → bus. bus → master lowpass (the "intensity"
+// filter) → compressor → out. Sends: ping-pong delay, plate-ish reverb, and
+// a gated reverb for the snare, because 1984.
+function makeEngine(ctx){
+  const master = ctx.createGain(); master.gain.value = 0.82;
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -18; comp.knee.value = 14; comp.ratio.value = 4; comp.attack.value = 0.004; comp.release.value = 0.16;
+  const lpf = ctx.createBiquadFilter(); lpf.type = 'lowpass'; lpf.Q.value = 0.6; lpf.frequency.value = 2200;
+  const bus = ctx.createGain();
+  bus.connect(lpf); lpf.connect(comp); comp.connect(master); master.connect(ctx.destination);
+  const analyser = ctx.createAnalyser(); analyser.fftSize = 256; analyser.smoothingTimeConstant = 0.55; master.connect(analyser);
+
+  const drums = ctx.createGain(); drums.gain.value = 1.0; drums.connect(bus);
+  const duck  = ctx.createGain(); duck.connect(bus);
+  const music = ctx.createGain(); music.gain.value = 0.9; music.connect(duck);
+  const lead  = ctx.createGain(); lead.gain.value = 0.85; lead.connect(bus);
+
+  // ping-pong delay, dotted eighth
+  const dl = ctx.createDelay(1), dr = ctx.createDelay(1); dl.delayTime.value = dr.delayTime.value = STEP * 3;
+  const fb = ctx.createGain(); fb.gain.value = 0.42;
+  const dlp = ctx.createBiquadFilter(); dlp.type = 'lowpass'; dlp.frequency.value = 3400;
+  const dlySend = ctx.createGain();
+  dlySend.connect(dl); dl.connect(dr); dr.connect(dlp); dlp.connect(fb); fb.connect(dl);
+  const merger = ctx.createChannelMerger(2); dl.connect(merger, 0, 0); dr.connect(merger, 0, 1);
+  const dlyOut = ctx.createGain(); dlyOut.gain.value = 0.45; merger.connect(dlyOut); dlyOut.connect(bus);
+
+  function makeIR(dur, decay, gate){
+    const n = Math.floor(ctx.sampleRate * dur), b = ctx.createBuffer(2, n, ctx.sampleRate);
+    for (let c = 0; c < 2; c++){ const d = b.getChannelData(c);
+      for (let i = 0; i < n; i++){ const t = i / ctx.sampleRate; let e = Math.exp(-t * decay);
+        if (gate) e *= t < dur - 0.02 ? 1 : (dur - t) / 0.02;
+        d[i] = (Math.random() * 2 - 1) * e; } }
+    return b;
+  }
+  const verb = ctx.createConvolver(); verb.buffer = makeIR(2.4, 3.0, false);
+  const verbSend = ctx.createGain(); verbSend.connect(verb);
+  const verbOut = ctx.createGain(); verbOut.gain.value = 0.5; verb.connect(verbOut); verbOut.connect(bus);
+  const gate = ctx.createConvolver(); gate.buffer = makeIR(0.30, 5.0, true);
+  const gateSend = ctx.createGain(); gateSend.gain.value = 0.7; gateSend.connect(gate); gate.connect(drums);
+
+  const noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+  { const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; }
+  const distCurve = new Float32Array(1024);
+  for (let i = 0; i < 1024; i++){ const x = i / 511.5 - 1; distCurve[i] = Math.tanh(x * 9) / Math.tanh(9); }
+
+  const osc = (type, f, t0, t1, det = 0) => { const o = ctx.createOscillator(); o.type = type; o.frequency.value = f; o.detune.value = det; o.start(t0); o.stop(t1); return o; };
+  const noise = (t0, t1) => { const s = ctx.createBufferSource(); s.buffer = noiseBuf; s.loop = true; s.start(t0); s.stop(t1); return s; };
+  const send = (node, to, g) => { const s = ctx.createGain(); s.gain.value = g; node.connect(s); s.connect(to); };
+  const pan = (to, p) => { if (!ctx.createStereoPanner) return to; const n = ctx.createStereoPanner(); n.pan.value = p; n.connect(to); return n; };
+  const E = 0.0005;
+
+  function duckAt(t){
+    duck.gain.cancelScheduledValues(t); duck.gain.setValueAtTime(0.4, t); duck.gain.linearRampToValueAtTime(1, t + BEAT * 0.6);
+  }
+  function kick(t, v = 1){
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(175, t); o.frequency.exponentialRampToValueAtTime(44, t + 0.07);
+    const g = ctx.createGain(); g.gain.setValueAtTime(1.05 * v, t); g.gain.exponentialRampToValueAtTime(E, t + 0.40);
+    o.connect(g); g.connect(drums); o.start(t); o.stop(t + 0.42);
+    const n = noise(t, t + 0.03); const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 2500;
+    const ng = ctx.createGain(); ng.gain.setValueAtTime(0.3 * v, t); ng.gain.exponentialRampToValueAtTime(E, t + 0.025);
+    n.connect(hp); hp.connect(ng); ng.connect(drums);
+    duckAt(t);
+  }
+  function snare(t, v = 1){
+    const n = noise(t, t + 0.3); const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1900; bp.Q.value = 0.7;
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.9 * v, t); g.gain.exponentialRampToValueAtTime(E, t + 0.22);
+    n.connect(bp); bp.connect(g); g.connect(drums); g.connect(gateSend);
+    const o = osc('triangle', 190, t, t + 0.15); o.frequency.exponentialRampToValueAtTime(120, t + 0.1);
+    const og = ctx.createGain(); og.gain.setValueAtTime(0.55 * v, t); og.gain.exponentialRampToValueAtTime(E, t + 0.12);
+    o.connect(og); og.connect(drums);
+  }
+  function hat(t, v = 1, open = false){
+    const d = open ? 0.30 : 0.05; const n = noise(t, t + d + 0.02);
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 7500;
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.3 * v, t); g.gain.exponentialRampToValueAtTime(E, t + d);
+    n.connect(hp); hp.connect(g); g.connect(drums);
+  }
+  function cym(t, v = 1){
+    const n = noise(t, t + 1.6); const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 5000;
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.35 * v, t); g.gain.exponentialRampToValueAtTime(E, t + 1.5);
+    n.connect(hp); hp.connect(g); g.connect(drums); send(g, verbSend, 0.5);
+  }
+  function bass(t, midi, dur, v = 1){
+    const f = mtof(midi), end = t + dur;
+    const o1 = osc('sawtooth', f, t, end + 0.05, -6), o2 = osc('sawtooth', f, t, end + 0.05, 6);
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 5;
+    lp.frequency.setValueAtTime(320 + 1500 * v, t); lp.frequency.exponentialRampToValueAtTime(240, t + 0.16);
+    const g = ctx.createGain(); g.gain.setValueAtTime(E, t); g.gain.linearRampToValueAtTime(0.16 * v, t + 0.006);
+    g.gain.setValueAtTime(0.16 * v, end - 0.03); g.gain.exponentialRampToValueAtTime(E, end + 0.02);
+    o1.connect(lp); o2.connect(lp); lp.connect(g); g.connect(music);
+    const s = osc('sine', f, t, end + 0.05); const sg = ctx.createGain();
+    sg.gain.setValueAtTime(0.11 * v, t); sg.gain.setValueAtTime(0.11 * v, end - 0.03); sg.gain.exponentialRampToValueAtTime(E, end + 0.02);
+    s.connect(sg); sg.connect(music);
+  }
+  function arp(t, midi, v = 1, bright = 0.5){
+    const f = mtof(midi);
+    const o1 = osc('square', f, t, t + 0.3), o2 = osc('sawtooth', f, t, t + 0.3, 8);
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 3;
+    lp.frequency.setValueAtTime(900 + 5000 * bright, t); lp.frequency.exponentialRampToValueAtTime(420, t + 0.22);
+    const g = ctx.createGain(); g.gain.setValueAtTime(E, t); g.gain.linearRampToValueAtTime(0.16 * v, t + 0.004); g.gain.exponentialRampToValueAtTime(E, t + 0.26);
+    const o2g = ctx.createGain(); o2g.gain.value = 0.5;
+    o1.connect(lp); o2.connect(o2g); o2g.connect(lp); lp.connect(g); g.connect(music); send(g, dlySend, 0.3);
+  }
+  function pad(t, midis, dur){
+    const end = t + dur + 1.4;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.8;
+    lp.frequency.setValueAtTime(650, t); lp.frequency.linearRampToValueAtTime(1500, t + dur * 0.55); lp.frequency.linearRampToValueAtTime(700, end);
+    const g = ctx.createGain(); g.gain.setValueAtTime(E, t); g.gain.linearRampToValueAtTime(1, t + 0.5);
+    g.gain.setValueAtTime(1, t + dur - 0.05); g.gain.linearRampToValueAtTime(E, end);
+    for (const m of midis){ const f = mtof(m);
+      for (const d of [-11, 0, 11]){ const o = osc('sawtooth', f, t, end + 0.05, d); const og = ctx.createGain(); og.gain.value = 0.032; o.connect(og); og.connect(pan(lp, d / 11 * 0.55)); } }
+    lp.connect(g); g.connect(music); send(g, verbSend, 0.6);
+  }
+  // the traffic's note: a pluck whose brightness is your nerve
+  function leadNote(t, midi, v){
+    const f = mtof(midi), dur = 0.45 + 0.9 * v;
+    const o1 = osc('sawtooth', f, t, t + dur + 0.1, -5), o2 = osc('sawtooth', f, t, t + dur + 0.1, 7), o3 = osc('square', f / 2, t, t + dur + 0.1);
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 4;
+    lp.frequency.setValueAtTime(500 + 7500 * v, t); lp.frequency.exponentialRampToValueAtTime(350, t + dur * 0.7);
+    const g = ctx.createGain(); g.gain.setValueAtTime(E, t); g.gain.linearRampToValueAtTime(0.09 + 0.36 * v, t + 0.005); g.gain.exponentialRampToValueAtTime(E, t + dur);
+    const o3g = ctx.createGain(); o3g.gain.value = 0.35;
+    o1.connect(lp); o2.connect(lp); o3.connect(o3g); o3g.connect(lp); lp.connect(g); g.connect(lead);
+    send(g, dlySend, 0.45); send(g, verbSend, 0.25);
+  }
+  // your note: a supersaw, pitched by where you touched the road
+  function tapNote(t, midi, bright){
+    const f = mtof(midi), dur = 1.0;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 2;
+    lp.frequency.setValueAtTime(500 + 8000 * bright, t); lp.frequency.exponentialRampToValueAtTime(700, t + 0.6);
+    const g = ctx.createGain(); g.gain.setValueAtTime(E, t); g.gain.linearRampToValueAtTime(0.14, t + 0.008); g.gain.exponentialRampToValueAtTime(E, t + dur);
+    for (const d of [-19, -8, 0, 8, 19]){ const o = osc('sawtooth', f, t, t + dur + 0.05, d); o.connect(pan(lp, d / 19 * 0.7)); }
+    const s = osc('sine', f / 2, t, t + dur + 0.05); const sg = ctx.createGain(); sg.gain.value = 0.3; s.connect(sg); sg.connect(lp);
+    lp.connect(g); g.connect(lead); send(g, dlySend, 0.5); send(g, verbSend, 0.35);
+  }
+  function crash(t){
+    const n = noise(t, t + 0.8); const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 2;
+    lp.frequency.setValueAtTime(7000, t); lp.frequency.exponentialRampToValueAtTime(120, t + 0.55);
+    const ws = ctx.createWaveShaper(); ws.curve = distCurve;
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.9, t); g.gain.exponentialRampToValueAtTime(E, t + 0.65);
+    n.connect(lp); lp.connect(ws); ws.connect(g); g.connect(drums); send(g, verbSend, 0.5);
+    const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.setValueAtTime(90, t); o.frequency.exponentialRampToValueAtTime(28, t + 0.3);
+    const og = ctx.createGain(); og.gain.setValueAtTime(1, t); og.gain.exponentialRampToValueAtTime(E, t + 0.5);
+    o.connect(og); og.connect(drums); o.start(t); o.stop(t + 0.55);
+  }
+  function whoosh(t, dir){
+    const n = noise(t, t + 0.4); const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.2;
+    bp.frequency.setValueAtTime(500, t); bp.frequency.exponentialRampToValueAtTime(2600, t + 0.12); bp.frequency.exponentialRampToValueAtTime(400, t + 0.36);
+    const g = ctx.createGain(); g.gain.setValueAtTime(E, t); g.gain.linearRampToValueAtTime(0.3, t + 0.05); g.gain.exponentialRampToValueAtTime(E, t + 0.38);
+    const pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    n.connect(bp); bp.connect(g);
+    if (pan){ pan.pan.value = dir * 0.6; g.connect(pan); pan.connect(bus); } else g.connect(bus);
+  }
+  function riser(t, dur){
+    const n = noise(t, t + dur + 0.1); const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 3;
+    bp.frequency.setValueAtTime(150, t); bp.frequency.exponentialRampToValueAtTime(6000, t + dur);
+    const g = ctx.createGain(); g.gain.setValueAtTime(E, t); g.gain.linearRampToValueAtTime(0.28, t + dur); g.gain.exponentialRampToValueAtTime(E, t + dur + 0.05);
+    n.connect(bp); bp.connect(g); g.connect(drums); send(g, verbSend, 0.4);
+  }
+  function setCutoff(hz){ lpf.frequency.setTargetAtTime(hz, ctx.currentTime, 0.08); }
+  function setMuted(m){ master.gain.setTargetAtTime(m ? 0 : 0.82, ctx.currentTime, 0.03); }
+
+  return { ctx, kick, snare, hat, cym, bass, arp, pad, leadNote, tapNote, crash, whoosh, riser, setCutoff, setMuted, analyser, master, lpf };
+}
+
+// The arrangement. One chord per bar, four bars per progression. Every 32
+// bars the kick drops out for a four-bar build with snare rolls and a riser,
+// then lands. Fills close every fourth bar. Intensity (0..1) opens the
+// hats and the arp; the master filter is driven from outside.
+function makeSequencer(eng, api){
+  let arpPat = ARPS[0], arpBar = -1;
+  const events = [];   // visual cues, in song-time
+  function scheduleStep(step, t){
+    const bar = step >> 4, s = step & 15, beat = s >> 2, sub = s & 3;
+    const ch = api.chordAt(bar), I = api.intensity(), L = api.layers;
+    const b32 = bar % 32, build = bar >= 28 && b32 >= 28, drop = bar > 0 && b32 === 0;
+    if (bar >> 3 !== arpBar){ arpBar = bar >> 3; arpPat = ARPS[Math.floor(api.rng() * ARPS.length)]; }
+    const drumsOn = L.drums && step >= api.drumMutedUntil();
+    if (s === 0){
+      if (L.pad) eng.pad(t, ch.tones.map(x => KEY + 12 + ch.root + x), BAR);
+      if (drop){ if (drumsOn) eng.cym(t); events.push({ t: t - api.tOff(), kind: 'drop' }); }
+      else if (bar % 8 === 0 && drumsOn) eng.cym(t, 0.6);
+      if (build && b32 === 28 && drumsOn) eng.riser(t, BAR * 4);
+      events.push({ t: t - api.tOff(), kind: 'bar' });
+    }
+    if (drumsOn){
+      if (!build){
+        if (sub === 0) eng.kick(t, beat === 0 ? 1 : 0.92);
+        if (I > 0.7 && s === 10 && (bar & 1)) eng.kick(t, 0.7);
+        if (s === 4 || s === 12) eng.snare(t, 1);
+        if (bar % 4 === 3 && s > 12) eng.snare(t, 0.35 + 0.2 * (s - 12));
+      } else {
+        const k = b32 - 28;
+        if (k < 2){ if ((s & 1) === 0) eng.snare(t, 0.5 + 0.2 * k + 0.1 * (s / 16)); }
+        else eng.snare(t, 0.7 + 0.3 * ((k - 2) * 16 + s) / 32);
+      }
+      if (sub === 0) eng.hat(t, 0.9); else if (sub === 2) eng.hat(t, 0.55); else if (I > 0.55) eng.hat(t, 0.28 + 0.1 * (s % 3));
+      if (s === 14 && (bar & 1) && I > 0.35) eng.hat(t, 0.7, true);
+    }
+    if (L.bass && !(build && b32 >= 30)){
+      const p = BASSP[(bar >> 3) & 1][s];
+      if (p !== null) eng.bass(t, KEY - 12 + ch.root + p, STEP * 0.85, sub === 0 ? 1 : 0.8);
+    }
+    if (L.arp){
+      const tones = [ch.tones[0], ch.tones[1], ch.tones[2], ch.tones[3], ch.tones[0] + 12, ch.tones[1] + 12, ch.tones[2] + 12, ch.tones[3] + 12];
+      eng.arp(t, KEY + 12 + ch.root + tones[arpPat[s]], sub === 0 ? 1 : 0.8, 0.25 + 0.75 * I);
+    }
+  }
+  return { scheduleStep, events };
+}
+
+/* --------------------------------------------------------------- state */
+
+const S = {
+  lane: 0, px: LANE_X[0], pxPrev: LANE_X[0], roll: 0, tw: null,
+  I: I0, streak: 0, best: 0, passes: 0, crashes: 0, taps: 0, muted: false, started: false,
+  prog: 0, layers: { drums: true, bass: true, arp: true, pad: true },
+  shake: 0, glitch: 0, flash: 0, pulse: 0, pulseCol: new THREE.Color(1, 1, 1), sunPulse: 0,
+};
+try { S.best = parseInt(localStorage.getItem('nightrider.best') || '0', 10) || 0; } catch(e){}
+
+let ctx = null, eng = null, seq = null, tOff = 0, perf0 = performance.now();
+let nextStep = 0, drumMutedUntil = 0, seqTimer = 0;
+const songT = () => S.started ? ctx.currentTime + tOff : (performance.now() - perf0) / 1000;
+const chordAt = bar => PROGS[S.prog].chords[((bar % 4) + 4) % 4];
+
+/* ------------------------------------------------------------- traffic */
+
+const cars = [];
+let genBar = -1, bar0 = 0, motif = MOTIFS[0], motifK = 0, phrase = PH.intro[0];
+function setCarNote(c){
+  const ch = chordAt(c.bar);
+  const tones = [ch.tones[0], ch.tones[1], ch.tones[2], ch.tones[3], ch.tones[0] + 12, ch.tones[1] + 12];
+  c.midi = KEY + 24 + ch.root + tones[c.ti]; c.hue = hueOf(c.midi);
+  c.col.setHSL(c.hue / 360, 1, 0.6, THREE.SRGBColorSpace);
+}
+function genTrafficBar(bar){
+  const rel = bar - bar0; if (rel < 6) return;               // the first car needs 15 s to arrive from the fog
+  const p = Math.floor((rel - 6) / 4), i = (rel - 6) & 3;
+  if (i === 0){
+    const pool = p < 3 ? PH.intro : p < 7 ? (rng() < 0.3 ? PH.intro : PH.mid) : (rng() < 0.45 ? PH.mid : PH.hot);
+    phrase = pool[Math.floor(rng() * pool.length)];
+    if ((p & 1) === 0){ motif = MOTIFS[Math.floor(rng() * MOTIFS.length)]; motifK = 0; }
+  }
+  for (const s of phrase[i]){
+    const ti = motif[motifK++ % motif.length], step = bar * 16 + s;
+    const c = { bar, ti, step, arrT: step * STEP, midi: 0, hue: 0, col: new THREE.Color(), dare: undefined,
+      passed: false, crashed: false, crashT: 0, flash: -9, done: false, z: -1e9 };
+    setCarNote(c); cars.push(c);
+  }
+}
+function ensureTraffic(uptoBar){ while (genBar < uptoBar) { genBar++; genTrafficBar(genBar); } }
+
+/* ------------------------------------------------------------ renderer */
+
+const canvas = document.getElementById('c');
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', alpha: false });
+} catch(e){ document.getElementById('nogl').style.display = 'flex'; document.getElementById('start').style.display = 'none'; throw e; }
+renderer.autoClear = true;
+const DPR = Math.min(devicePixelRatio || 1, coarse ? 1.25 : 1.5);   // phones: the bloom hides the difference
+renderer.setPixelRatio(DPR);
+renderer.setSize(innerWidth, innerHeight, false);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.5, 900);
+const FOG = new THREE.Color(0x0a0412);
+scene.fog = new THREE.Fog(FOG, 110, 320);
+
+const C = h => new THREE.Color(h);
+const PAL = {
+  top: C(0x05020b), mid: C(0x1a0836), hor: C(0x4a1452), sunA: C(0xffe066), sunB: C(0xff2d8f), halo: C(0xff4f9e),
+  mtnFar: C(0x1a0b30), mtnNear: C(0x0c0518), city: C(0x08030f), ground: C(0x06030c), win1: C(0xffd36a), win2: C(0x5ff0ff),
+  asphalt: C(0x0d0b14), edge: C(0xff2bd6), dash: C(0x22e6ff), grid: C(0x9a1ee0), gridHi: C(0xff5ce6), refl: C(0xff6a4a),
+  tail: C(0xff2233), halo2: C(0xff3040), lamp: C(0x4be7ff), beam: C(0x8fa8ff), scanner: C(0xff1c24),
+};
+
+/* fullscreen triangle helper (NDC) */
+const triGeo = new THREE.BufferGeometry();
+triGeo.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
+const FS_VERT = `varying vec2 vUv; void main(){ vUv = position.xy * 0.5 + 0.5; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
+
+/* ---- backdrop: sky, sun, ridges, skyline. Drawn first, no depth. ---- */
+const backMat = new THREE.ShaderMaterial({
+  depthTest: false, depthWrite: false, fog: false,
+  uniforms: {
+    uAspect: { value: 1 }, uHor: { value: 0.1 }, uVpx: { value: 0 }, uTime: { value: 0 }, uSunPulse: { value: 0 },
+    cTop: { value: PAL.top }, cMid: { value: PAL.mid }, cHor: { value: PAL.hor }, cSunA: { value: PAL.sunA }, cSunB: { value: PAL.sunB },
+    cHalo: { value: PAL.halo }, cMtnFar: { value: PAL.mtnFar }, cMtnNear: { value: PAL.mtnNear }, cCity: { value: PAL.city },
+    cGround: { value: PAL.ground }, cWin1: { value: PAL.win1 }, cWin2: { value: PAL.win2 },
+  },
+  vertexShader: `varying vec2 vN; void main(){ vN = position.xy; gl_Position = vec4(position.xy, 0.9999, 1.0); }`,
+  fragmentShader: `
+    precision highp float;
+    varying vec2 vN;
+    uniform float uAspect, uHor, uVpx, uTime, uSunPulse;
+    uniform vec3 cTop, cMid, cHor, cSunA, cSunB, cHalo, cMtnFar, cMtnNear, cCity, cGround, cWin1, cWin2;
+    float hash(float n){ return fract(sin(n) * 43758.5453); }
+    float hash2(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    float vnoise(float x){ float i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f); return mix(hash(i), hash(i + 1.0), f); }
+    void main(){
+      vec2 p = vec2(vN.x * uAspect, vN.y);
+      float hy = uHor, a = p.y - hy;
+      float sx = uVpx * uAspect, dx = p.x - sx;
+      float t = clamp(a / 1.1, 0.0, 1.0);
+      vec3 col = mix(cHor, cMid, smoothstep(0.0, 0.30, t));
+      col = mix(col, cTop, smoothstep(0.25, 1.0, t));
+      vec2 sc = vec2(sx, hy + 0.115);
+      float R = 0.215 * (1.0 + 0.02 * uSunPulse);
+      float d = length(p - sc);
+      col += cHalo * exp(-max(d - R, 0.0) * 6.0) * 0.28;
+      col += cHalo * exp(-abs(dx) * 1.6) * exp(-max(a, 0.0) * 3.0) * 0.22;
+      if (a > 0.03){
+        vec2 g = p * 38.0; vec2 id = floor(g), f = fract(g); float h = hash2(id);
+        if (h > 0.86){ vec2 sp = vec2(hash2(id + 1.7), hash2(id + 3.1)); float sd = length(f - sp);
+          float tw = 0.6 + 0.4 * sin(uTime * (1.0 + h * 3.0) + h * 40.0);
+          col += vec3(0.7, 0.8, 1.0) * smoothstep(0.09, 0.0, sd) * tw * smoothstep(0.03, 0.35, a) * (h - 0.86) * 6.0; }
+      }
+      float yy = (p.y - (sc.y - R)) / (2.0 * R);
+      float stripes = 1.0;
+      if (yy < 0.62){ float f = fract(yy * 12.0 - uTime * 0.03); float gap = 0.75 * (1.0 - yy / 0.62); stripes = smoothstep(gap, gap + 0.035, f); }
+      vec3 sun = mix(cSunB, cSunA, smoothstep(0.0, 1.0, yy));
+      float disc = smoothstep(R, R - 0.006, d);
+      col = mix(col, sun * 0.95, disc * stripes);
+      float open = smoothstep(0.06, 0.55, abs(dx));
+      float m1 = 0.06 + 0.11 * vnoise(p.x * 1.7 + 5.0) + 0.045 * vnoise(p.x * 5.1 + 2.0) + 0.015 * vnoise(p.x * 13.0);
+      float m2 = 0.02 + 0.06 * vnoise(p.x * 2.6 + 17.0) + 0.03 * vnoise(p.x * 8.0 + 9.0);
+      m1 = hy + m1 * mix(0.35, 1.0, open); m2 = hy + m2 * mix(0.15, 1.0, open);
+      float aa = fwidth(p.y) * 1.5;
+      float above = step(hy, p.y);
+      col = mix(col, cMtnFar, smoothstep(m1 + aa, m1 - aa, p.y) * above);
+      col = mix(col, cMtnNear, smoothstep(m2 + aa, m2 - aa, p.y) * above);
+      float bw = 0.045; float bid = floor(p.x / bw);
+      float bh = hy + 0.012 + pow(hash(bid * 3.7), 2.0) * 0.11 * mix(0.2, 1.0, smoothstep(0.05, 0.5, abs(dx)));
+      float inB = above * smoothstep(bh + aa, bh - aa, p.y);
+      vec2 wg = vec2(fract(p.x / bw) * 4.0, (p.y - hy) / 0.012);
+      float wh = hash2(vec2(bid * 7.3 + floor(wg.x), floor(wg.y) * 1.9));
+      float lit = step(0.8, wh) * step(0.25, fract(wg.x)) * step(fract(wg.x), 0.75) * step(0.25, fract(wg.y)) * step(fract(wg.y), 0.75);
+      vec3 city = cCity + mix(cWin1, cWin2, step(0.93, wh)) * lit * 0.9;
+      col = mix(col, city, inB);
+      if (p.y < hy) col = cGround + cHalo * exp(-abs(dx) * 2.5) * exp((p.y - hy) * 6.0) * 0.35;
+      gl_FragColor = vec4(col, 1.0);
+    }`,
+});
+const backdrop = new THREE.Mesh(triGeo, backMat); backdrop.frustumCulled = false; backdrop.renderOrder = -10; scene.add(backdrop);
+
+/* ---- ground: asphalt, neon edges, one dash per beat, the grid ---- */
+const groundMat = new THREE.ShaderMaterial({
+  transparent: true, depthWrite: true, fog: false,
+  uniforms: {
+    uScroll: { value: 0 }, uBeat: { value: 0 }, uBarPhase: { value: 0 },
+    cAsphalt: { value: PAL.asphalt }, cEdge: { value: PAL.edge }, cDash: { value: PAL.dash }, cGrid: { value: PAL.grid },
+    cGridHi: { value: PAL.gridHi }, cGround: { value: PAL.ground }, cRefl: { value: PAL.refl },
+  },
+  vertexShader: `varying vec3 vW; void main(){ vW = (modelMatrix * vec4(position, 1.0)).xyz; gl_Position = projectionMatrix * viewMatrix * vec4(vW, 1.0); }`,
+  fragmentShader: `
+    precision highp float;
+    varying vec3 vW;
+    uniform float uScroll, uBeat, uBarPhase;
+    uniform vec3 cAsphalt, cEdge, cDash, cGrid, cGridHi, cGround, cRefl;
+    float g(float u, float period, float w){ float f = abs(fract(u / period) - 0.5) * period; return 1.0 - smoothstep(w, w + fwidth(u) * 1.2, f); }
+    void main(){
+      float x = vW.x, z = vW.z + uScroll, dist = max(0.0, -vW.z);
+      float ax = abs(x), aw = fwidth(x) * 1.2;
+      float onRoad = 1.0 - smoothstep(3.78, 3.78 + aw, ax);
+      float n = fract(sin(dot(floor(vec2(x, z) * 2.0), vec2(12.9898, 78.233))) * 43758.5453);
+      vec3 col = mix(cGround, cAsphalt * (0.8 + 0.4 * n), onRoad);
+      col += cRefl * exp(-ax * 0.5) * smoothstep(15.0, 220.0, dist) * 0.55 * onRoad;
+      float edge = 1.0 - smoothstep(0.09, 0.09 + aw, abs(ax - 3.6));
+      col = mix(col, cEdge * 1.1, edge);
+      float dash = (1.0 - smoothstep(0.075, 0.075 + aw, ax)) * (1.0 - smoothstep(0.26, 0.26 + fwidth(z) / 16.0, fract(z / 16.0)));
+      col = mix(col, cDash * (0.8 + 0.4 * uBeat), dash);
+      float off = 1.0 - onRoad;
+      float gx = g(ax - 3.6, 8.0, 0.05), gz = g(z, 8.0, 0.05);
+      float wave = exp(-abs(dist - (1.0 - uBarPhase) * 300.0) / 22.0);
+      float gridA = max(gx, gz) * off * exp(-dist / 110.0) * (1.0 - smoothstep(140.0, 300.0, dist));
+      vec3 gridC = mix(cGrid, cGridHi, 0.35 * uBeat + 0.65 * wave);
+      col = mix(col, gridC * 0.55, gridA);
+      float alpha = 1.0 - smoothstep(260.0, 560.0, dist);
+      gl_FragColor = vec4(col, alpha);
+    }`,
+});
+const groundGeo = new THREE.PlaneGeometry(440, 640, 1, 1); groundGeo.rotateX(-Math.PI / 2); groundGeo.translate(0, 0, -300);
+const ground = new THREE.Mesh(groundGeo, groundMat); ground.renderOrder = -5; ground.frustumCulled = false; scene.add(ground);
+
+/* ---- textures for the glows ---- */
+function glowTex(kind){
+  const w = 128, h = kind === 'radial' ? 128 : 256, cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const g = cv.getContext('2d'), img = g.createImageData(w, h), d = img.data;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++){
+    const u = (x + 0.5) / w, v = (y + 0.5) / h; let a;
+    if (kind === 'radial'){ const r = Math.hypot(u - 0.5, v - 0.5) * 2; a = Math.pow(clamp(1 - r, 0, 1), 2.2); }
+    else { a = Math.pow(clamp(1 - Math.abs(u - 0.5) * 2, 0, 1), 2) * Math.pow(v, 1.6); } // bright at v=1
+    const i = (y * w + x) * 4; d[i] = d[i + 1] = d[i + 2] = 255; d[i + 3] = Math.round(a * 255);
+  }
+  g.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(cv); t.flipY = false; t.colorSpace = THREE.NoColorSpace; t.minFilter = THREE.LinearFilter; t.magFilter = THREE.LinearFilter; return t;
+}
+const radialTex = glowTex('radial'), smearTex = glowTex('smear');
+const glowMat = (tex, color, opacity = 1) => new THREE.MeshBasicMaterial({ map: tex, color, transparent: true, opacity, blending: THREE.AdditiveBlending,
+  depthWrite: false, depthTest: false, fog: false, side: THREE.DoubleSide });
+
+/* ---- geometry helpers ---- */
+function boxes(list){ // {x0,x1,y0,y1,z0,z1,col:[r,g,b], shade?}
+  const pos = [], col = [], idx = []; let n = 0;
+  const face = (a, b, c, d, k, box) => { const s = box.shade ? box.shade[k] : [1, .55, .75, .75, .6, .6][k];
+    for (const v of [a, b, c, d]){ pos.push(...v); col.push(box.col[0] * s, box.col[1] * s, box.col[2] * s); }
+    idx.push(n, n + 1, n + 2, n, n + 2, n + 3); n += 4; };
+  for (const b of list){ const {x0, x1, y0, y1, z0, z1} = b;
+    face([x0,y1,z0],[x0,y1,z1],[x1,y1,z1],[x1,y1,z0], 0, b);   // top
+    face([x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[x0,y0,z1], 1, b);   // bottom
+    face([x1,y0,z0],[x1,y1,z0],[x1,y1,z1],[x1,y0,z1], 2, b);   // +x
+    face([x0,y0,z0],[x0,y0,z1],[x0,y1,z1],[x0,y1,z0], 3, b);   // -x
+    face([x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1], 4, b);   // +z rear
+    face([x0,y0,z0],[x0,y1,z0],[x1,y1,z0],[x1,y0,z0], 5, b);   // -z front
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx); g.computeVertexNormals(); return g;
+}
+function quads(list){ // {x,y,z,w,h,flat,flipV}
+  const pos = [], uv = [], idx = []; let n = 0;
+  for (const q of list){ const hw = q.w / 2, hh = q.h / 2;
+    if (q.flat) pos.push(q.x-hw,q.y,q.z+hh, q.x+hw,q.y,q.z+hh, q.x+hw,q.y,q.z-hh, q.x-hw,q.y,q.z-hh);  // v=1 at -z (far)
+    else pos.push(q.x-hw,q.y-hh,q.z, q.x+hw,q.y-hh,q.z, q.x+hw,q.y+hh,q.z, q.x-hw,q.y+hh,q.z);
+    if (q.flipV) uv.push(0,1, 1,1, 1,0, 0,0); else uv.push(0,0, 1,0, 1,1, 0,1);
+    idx.push(n,n+1,n+2, n,n+2,n+3); n += 4; }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx); return g;
+}
+const lin = h => { const c = new THREE.Color(h); return [c.r, c.g, c.b]; };
+
+// A car: low body, cabin set back, four wheels. Traffic gets neon sills.
+function carBoxes(bodyHex, sillHex){
+  const body = lin(bodyHex), wheel = lin(0x050508);
+  const L = [
+    { x0:-0.95, x1:0.95, y0:0.22, y1:0.62, z0:-2.2, z1:2.2, col: body },
+    { x0:-0.75, x1:0.75, y0:0.62, y1:1.0, z0:-0.5, z1:1.6, col: body, shade:[1.15,.5,.7,.7,.55,.55] },
+  ];
+  for (const sx of [-0.85, 0.85]) for (const sz of [-1.45, 1.45]) L.push({ x0:sx-0.14, x1:sx+0.14, y0:0, y1:0.62, z0:sz-0.34, z1:sz+0.34, col: wheel });
+  if (sillHex !== undefined){ const s = lin(sillHex);
+    for (const sx of [-0.97, 0.97]) L.push({ x0:sx-0.03, x1:sx+0.03, y0:0.2, y1:0.25, z0:-2.1, z1:2.1, col: s, shade:[1,1,1,1,1,1] }); }
+  return L;
+}
+
+/* ---- traffic (instanced) ---- */
+const carBodyGeo = boxes(carBoxes(0x0e0c18, 0xffffff));
+const carLightGeo = boxes([-0.62, 0.62].map(x => ({ x0:x-0.28, x1:x+0.28, y0:0.44, y1:0.56, z0:2.2, z1:2.26, col: lin(0xff2233), shade:[1,1,1,1,1,1] })));
+const carGlowGeo = quads([{ x:0, y:0.02, z:0, w:3.0, h:5.6, flat:true }]);
+const carHaloGeo = quads([{ x:-0.62, y:0.5, z:2.3, w:1.0, h:0.5 }, { x:0.62, y:0.5, z:2.3, w:1.0, h:0.5 }]);
+const carSmearGeo = quads([{ x:-0.62, y:0.03, z:2.3+2.5, w:0.8, h:5, flat:true }, { x:0.62, y:0.03, z:2.3+2.5, w:0.8, h:5, flat:true }]);
+const carBeamGeo = quads([{ x:0, y:0.03, z:-7.5, w:4.8, h:11, flat:true }]);
+const carBody = new THREE.InstancedMesh(carBodyGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }), MAXCARS);
+const carLight = new THREE.InstancedMesh(carLightGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }), MAXCARS);
+const carGlow = new THREE.InstancedMesh(carGlowGeo, glowMat(radialTex, 0xffffff, 0.8), MAXCARS);
+const carHalo = new THREE.InstancedMesh(carHaloGeo, glowMat(radialTex, 0xffffff, 1), MAXCARS);
+const carSmear = new THREE.InstancedMesh(carSmearGeo, glowMat(smearTex, 0xffffff, 0.22), MAXCARS);
+const carBeam = new THREE.InstancedMesh(carBeamGeo, glowMat(radialTex, 0xffffff, 0.22), MAXCARS);
+const carMeshes = [carBody, carLight, carGlow, carHalo, carSmear, carBeam];
+const white = new THREE.Color(1, 1, 1);
+for (const m of carMeshes){ m.frustumCulled = false; m.count = 0; for (let i = 0; i < MAXCARS; i++) m.setColorAt(i, white); scene.add(m); }
+carGlow.renderOrder = 2; carSmear.renderOrder = 2; carBeam.renderOrder = 1; carHalo.renderOrder = 3;
+
+/* ---- the player: black, low, a red bar at the back and a red eye up front ---- */
+const player = new THREE.Group(); scene.add(player);
+const pBody = new THREE.Mesh(boxes(carBoxes(0x2a2742)), new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+const pBar = new THREE.Mesh(boxes([{ x0:-0.86, x1:0.86, y0:0.45, y1:0.55, z0:2.2, z1:2.27, col: lin(0xff1a2a), shade:[1,1,1,1,1,1] }]),
+  new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+const pHalo = new THREE.Mesh(quads([{ x:0, y:0.5, z:2.32, w:2.2, h:0.55 }]), glowMat(radialTex, PAL.tail, 0.55));
+const pSmear = new THREE.Mesh(quads([{ x:0, y:0.03, z:2.3+3.8, w:2.2, h:7.6, flat:true }]), glowMat(smearTex, PAL.tail, 0.3));
+const pGlow = new THREE.Mesh(quads([{ x:0, y:0.02, z:0, w:3.2, h:6, flat:true }]), glowMat(radialTex, PAL.tail, 0.28));
+const pHead = new THREE.Mesh(quads([{ x:0, y:0.03, z:-8.5, w:6, h:13, flat:true }]), glowMat(radialTex, PAL.beam, 0.3));
+const scanner = new THREE.Mesh(quads([{ x:0, y:0.035, z:-3.7, w:1.6, h:3.0, flat:true }]), glowMat(radialTex, PAL.scanner, 0.75));
+const scanEye = new THREE.Mesh(boxes([{ x0:-0.55, x1:0.55, y0:0.4, y1:0.46, z0:-2.22, z1:-2.16, col: lin(0xff1a2a), shade:[1,1,1,1,1,1] }]),
+  new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+for (const m of [pBody, pBar, pHalo, pSmear, pGlow, pHead, scanner, scanEye]) player.add(m);
+pHalo.renderOrder = 3; pSmear.renderOrder = 2; pGlow.renderOrder = 2; pHead.renderOrder = 1; scanner.renderOrder = 2;
+
+/* ---- light poles: one every two beats of road ---- */
+const NPOLE = 20, POLE_D = SPEED * BEAT * 2;   // 32 m
+const poleGeo = boxes([{ x0:-0.07, x1:0.07, y0:0, y1:5.2, z0:-0.07, z1:0.07, col: lin(0x14101f) },
+  { x0:-0.07, x1:1.4, y0:5.1, y1:5.2, z0:-0.07, z1:0.07, col: lin(0x14101f) }]);
+const poles = new THREE.InstancedMesh(poleGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }), NPOLE * 2);
+const lampGeo = quads([{ x:1.0, y:5.15, z:0, w:1.6, h:0.5 }]);
+const lamps = new THREE.InstancedMesh(lampGeo, glowMat(radialTex, PAL.lamp, 0.9), NPOLE * 2);
+const lampPool = new THREE.InstancedMesh(quads([{ x:0.6, y:0.03, z:0, w:7, h:9, flat:true }]), glowMat(radialTex, PAL.lamp, 0.14), NPOLE * 2);
+for (const m of [poles, lamps, lampPool]){ m.frustumCulled = false; scene.add(m); }
+lampPool.renderOrder = 1; lamps.renderOrder = 3;
+
+/* ---- effects pools: rings on the road, pillars where you touch it ---- */
+const ringGeo = new THREE.RingGeometry(0.93, 1, 64); ringGeo.rotateX(-Math.PI / 2);
+const rings = [];
+for (let i = 0; i < 20; i++){
+  const m = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending,
+    depthWrite: false, depthTest: false, fog: false, side: THREE.DoubleSide }));
+  m.visible = false; m.renderOrder = 4; scene.add(m); rings.push({ m, t0: -9, size: 1, life: 0.8 });
+}
+function ring(x, z, color, size = 1, life = 0.8){
+  let r = rings[0]; for (const q of rings) if (q.t0 < r.t0) r = q;
+  r.t0 = T; r.size = size; r.life = life; r.m.position.set(x, 0.04, z); r.m.material.color.copy(color); r.m.visible = true;
+}
+const pillars = [];
+for (let i = 0; i < 8; i++){
+  const g = new THREE.Group(); const mat = glowMat(smearTex, 0xffffff, 0);
+  const a = new THREE.Mesh(quads([{ x:0, y:0.5, z:0, w:1, h:1, flipV:true }]), mat); const b = a.clone(); b.rotation.y = Math.PI / 2;
+  g.add(a); g.add(b); g.visible = false; g.renderOrder = 4; scene.add(g); pillars.push({ g, mat, t0: -9 });
+}
+function pillar(x, z, color){
+  let p = pillars[0]; for (const q of pillars) if (q.t0 < p.t0) p = q;
+  p.t0 = T; p.g.position.set(x, 0, z); p.mat.color.copy(color); p.g.visible = true;
+}
+
+/* ---- post: scene → bloom (¼ and ⅛) → composite ---- */
+const postScene = new THREE.Scene(), postCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const quad = new THREE.Mesh(triGeo, null); quad.frustumCulled = false; postScene.add(quad);
+const rtOpts = { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false, stencilBuffer: false };
+const rtScene = new THREE.WebGLRenderTarget(2, 2, { ...rtOpts, depthBuffer: true, samples: coarse ? 0 : 2 });
+const rtA = new THREE.WebGLRenderTarget(2, 2, rtOpts), rtB = new THREE.WebGLRenderTarget(2, 2, rtOpts);
+const rtC = new THREE.WebGLRenderTarget(2, 2, rtOpts), rtD = new THREE.WebGLRenderTarget(2, 2, rtOpts);
+const brightMat = new THREE.ShaderMaterial({ uniforms: { tex: { value: null }, uThresh: { value: 0.72 } }, vertexShader: FS_VERT, fragmentShader: `
+  precision highp float; varying vec2 vUv; uniform sampler2D tex; uniform float uThresh;
+  void main(){ vec3 c = texture2D(tex, vUv).rgb; float m = max(c.r, max(c.g, c.b)); gl_FragColor = vec4(c * smoothstep(uThresh, uThresh + 0.35, m), 1.0); }` });
+const blurMat = new THREE.ShaderMaterial({ uniforms: { tex: { value: null }, uDir: { value: new THREE.Vector2() } }, vertexShader: FS_VERT, fragmentShader: `
+  precision highp float; varying vec2 vUv; uniform sampler2D tex; uniform vec2 uDir;
+  void main(){ vec3 s = texture2D(tex, vUv).rgb * 0.2270270270;
+    s += (texture2D(tex, vUv + uDir * 1.3846153846).rgb + texture2D(tex, vUv - uDir * 1.3846153846).rgb) * 0.3162162162;
+    s += (texture2D(tex, vUv + uDir * 3.2307692308).rgb + texture2D(tex, vUv - uDir * 3.2307692308).rgb) * 0.0702702703;
+    gl_FragColor = vec4(s, 1.0); }` });
+const compMat = new THREE.ShaderMaterial({
+  uniforms: { tScene: { value: null }, tB1: { value: null }, tB2: { value: null }, uAber: { value: 0.003 }, uGlitch: { value: 0 }, uFlash: { value: 0 },
+    uPulse: { value: 0 }, uPulseCol: { value: new THREE.Color(1, 1, 1) }, uTime: { value: 0 }, uRes: { value: new THREE.Vector2(1, 1) } },
+  vertexShader: FS_VERT, fragmentShader: `
+  precision highp float; varying vec2 vUv;
+  uniform sampler2D tScene, tB1, tB2; uniform float uAber, uGlitch, uFlash, uPulse, uTime; uniform vec3 uPulseCol; uniform vec2 uRes;
+  float hash(float n){ return fract(sin(n) * 43758.5453); }
+  void main(){
+    vec2 uv = vUv;
+    if (uGlitch > 0.002){ float band = floor(uv.y * 28.0); float r = hash(band * 1.7 + floor(uTime * 24.0));
+      if (r < uGlitch * 0.7) uv.x += (r - 0.35) * 0.12 * uGlitch; }
+    vec2 d = (uv - 0.5) * uAber;
+    vec3 c; c.r = texture2D(tScene, uv + d).r; c.g = texture2D(tScene, uv).g; c.b = texture2D(tScene, uv - d).b;
+    c += texture2D(tB1, uv).rgb * 0.7 + texture2D(tB2, uv).rgb * 0.5;
+    float vig = length(uv - 0.5);
+    c += uPulseCol * uPulse * smoothstep(0.3, 0.8, vig) * 0.6;
+    c += vec3(0.6, 0.04, 0.1) * uFlash;
+    c *= 1.0 - 0.45 * vig * vig;
+    c *= 0.965 + 0.035 * sin(uv.y * uRes.y * 3.14159);
+    c = (c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14);
+    gl_FragColor = vec4(pow(clamp(c, 0.0, 1.0), vec3(1.0 / 2.2)), 1.0);
+  }` });
+
+let resScale = 1, fpsEMA = 60, frames = 0;
+function sizeTargets(){
+  const w = Math.max(2, Math.floor(renderer.domElement.width * resScale)), h = Math.max(2, Math.floor(renderer.domElement.height * resScale));
+  if (rtScene.width !== w || rtScene.height !== h){
+    rtScene.setSize(w, h); rtA.setSize(w >> 2, h >> 2); rtB.setSize(w >> 2, h >> 2); rtC.setSize(w >> 3, h >> 3); rtD.setSize(w >> 3, h >> 3);
+  }
+}
+function frameCamera(){
+  const aspect = innerWidth / innerHeight;
+  camera.aspect = aspect;
+  camera.fov = clamp(2 * Math.atan(Math.tan(31 * Math.PI / 180) / aspect) * 180 / Math.PI, 62, 84);
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight, false); frameCamera(); sizeTargets(); });
+frameCamera(); sizeTargets();
+
+/* -------------------------------------------------------------- DOM */
+
+const $ = id => document.getElementById(id);
+const startEl = $('start'), labelEl = $('label'), streakEl = $('streak'), bestEl = $('best'), progBtn = $('prog'), vbc = $('vbc');
+$('labelp').innerHTML = coarse ? 'swipe to change lanes &middot; tap the road to play<br>pass close for a brighter note' : '&larr; &rarr; change lanes &middot; click the road to play<br>pass close for a brighter note';
+$('startp').innerHTML = coarse ? 'tap to start' : 'press any key &middot; click to start';
+bestEl.textContent = S.best;
+function setStreak(n, crashed){
+  S.streak = n; streakEl.textContent = n; streakEl.classList.remove('pop', 'crash'); void streakEl.offsetWidth;
+  streakEl.classList.add(crashed ? 'crash' : 'pop');
+  if (n > S.best){ S.best = n; bestEl.textContent = n; try { localStorage.setItem('nightrider.best', String(n)); } catch(e){} }
+}
+for (const b of document.querySelectorAll('.tg')) b.addEventListener('click', () => {
+  const k = b.dataset.layer; S.layers[k] = !S.layers[k]; b.classList.toggle('on', S.layers[k]); b.blur(); });
+progBtn.addEventListener('click', () => { setProg((S.prog + 1) % PROGS.length); progBtn.blur(); });
+function setProg(i){ S.prog = i; progBtn.textContent = PROGS[i].name; for (const c of cars) if (!c.passed && !c.crashed) setCarNote(c); }
+
+const vctx = vbc.getContext('2d'); const vbLevels = [0, 0, 0]; const fftBuf = new Uint8Array(128);
+function drawVoiceBox(){
+  const dpr = Math.min(devicePixelRatio || 1, 2), W = 84, H = 44;
+  if (vbc.width !== W * dpr){ vbc.width = W * dpr; vbc.height = H * dpr; }
+  vctx.setTransform(dpr, 0, 0, dpr, 0, 0); vctx.clearRect(0, 0, W, H);
+  if (eng){ eng.analyser.getByteFrequencyData(fftBuf);
+    const band = (a, b) => { let s = 0; for (let i = a; i < b; i++) s += fftBuf[i]; return Math.pow(s / (b - a) / 255, 1.4); };
+    const lo = band(0, 3), mid = band(3, 14), hi = band(14, 60);
+    const tgt = [Math.min(1, (mid * 0.6 + hi * 1.4)), Math.min(1, lo * 1.25), Math.min(1, (mid * 0.6 + hi * 1.4))];
+    for (let i = 0; i < 3; i++) vbLevels[i] = tgt[i] > vbLevels[i] ? lerp(vbLevels[i], tgt[i], 0.6) : lerp(vbLevels[i], tgt[i], 0.18);
+  } else { const b = 0.15 + 0.1 * Math.sin(T * 2); vbLevels[0] = vbLevels[2] = 0; vbLevels[1] = b; }
+  const cols = [{ x: 6, w: 18 }, { x: 29, w: 26 }, { x: 60, w: 18 }], segH = 3.6, gap = 1.2, midY = H / 2;
+  for (let c = 0; c < 3; c++){ const lit = Math.round(vbLevels[c] * 4);
+    for (let s = -4; s <= 4; s++){ const on = vbLevels[c] > 0.02 && Math.abs(s) <= lit;
+      vctx.shadowBlur = on ? 6 : 0; vctx.shadowColor = '#ff2b2b'; vctx.fillStyle = on ? '#ff2b2b' : 'rgba(255,40,40,0.12)';
+      vctx.fillRect(cols[c].x, midY - segH / 2 + s * (segH + gap), cols[c].w, segH); } }
+}
+
+/* --------------------------------------------------------------- audio start */
+
+function start(){
+  if (S.started) return;
+  const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+  ctx = new AC(); eng = makeEngine(ctx);
+  const Tpre = (performance.now() - perf0) / 1000;
+  tOff = Tpre - ctx.currentTime; S.started = true;
+  seq = makeSequencer(eng, { chordAt, intensity: () => S.I, layers: S.layers, rng, drumMutedUntil: () => drumMutedUntil, tOff: () => tOff });
+  nextStep = Math.ceil(Tpre / STEP) + 2;
+  bar0 = Math.floor(Tpre / BAR) + 1; ensureTraffic(bar0 + 8);
+  const tick = () => {
+    const now = ctx.currentTime + tOff;
+    if (nextStep * STEP < now - 0.5) nextStep = Math.ceil(now / STEP) + 1;      // tab was asleep: don't replay the past
+    while (nextStep * STEP < now + 0.12){ seq.scheduleStep(nextStep, nextStep * STEP - tOff); ensureTraffic((nextStep >> 4) + 8); nextStep++; }
+    eng.setCutoff(300 * Math.pow(2, 5.9 * S.I));
+  };
+  seqTimer = setInterval(tick, 25); tick();
+  if (ctx.state !== 'running') ctx.resume();
+  startEl.classList.add('gone'); labelEl.classList.add('show');
+  document.addEventListener('visibilitychange', () => { if (document.hidden) ctx.suspend(); else ctx.resume(); });
+}
+
+/* ------------------------------------------------------------------ play */
+
+let T = 0;
+function steer(dir){          // -1 left, +1 right
+  const want = dir < 0 ? 1 : 0; if (want === S.lane) return;
+  S.lane = want; S.tw = { from: S.px, to: LANE_X[want], t0: T };
+  if (want === 1){ let best = null;   // the dare: how close was the nearest car when you finally moved
+    for (const c of cars){ if (c.done || c.passed || c.crashed) continue; if (c.z > -70 && c.z < 4 && (!best || c.z > best.z)) best = c; }
+    if (best) best.dare = -best.z; }
+  if (eng) eng.whoosh(ctx.currentTime + 0.005, dir);
+}
+function tapAt(cx, cy){
+  const col = clamp(Math.floor(cx / innerWidth * 8), 0, 7), yN = 1 - cy / innerHeight;
+  const bright = clamp(yN * 1.3, 0.12, 1), midi = KEY + 12 + PENTA2[col] + (yN > 0.5 ? 12 : 0);
+  S.taps++;
+  if (eng) eng.tapNote(ctx.currentTime + 0.005, midi, bright);
+  const ndc = new THREE.Vector2(cx / innerWidth * 2 - 1, -(cy / innerHeight * 2 - 1));
+  const rc = new THREE.Raycaster(); rc.setFromCamera(ndc, camera);
+  const hit = new THREE.Vector3(); const ok = rc.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit);
+  let x, z; if (ok && hit.z < -2 && hit.z > -240){ x = hit.x; z = hit.z; } else { x = ndc.x * 60; z = -220; }
+  const color = new THREE.Color().setHSL(hueOf(midi) / 360, 1, 0.62, THREE.SRGBColorSpace);
+  pillar(x, z, color); ring(x, z, color, 0.7 + 0.6 * bright, 0.9);
+  S.pulse = Math.max(S.pulse, 0.35 * bright); S.pulseCol.copy(color);
+}
+function doPass(c){
+  const vel = c.dare === undefined ? 0.3 : 0.35 + 0.65 * Math.pow(1 - clamp((c.dare - 5) / 45, 0, 1), 1.4);
+  c.passed = true; c.flash = T; c.vel = vel; S.passes++;
+  if (eng) eng.leadNote(ctx.currentTime + 0.01, c.midi, vel);
+  S.I = Math.min(1, S.I + 0.04 + 0.08 * vel);
+  setStreak(S.streak + 1, false);
+  ring(LANE_X[0], 0, c.col, 0.6 + vel, 0.7);
+  if (c.dare !== undefined && c.dare < 12){ S.pulse = 1; S.pulseCol.copy(c.col); ring(LANE_X[0], 0, c.col, 2.2, 1.1); }
+}
+function doCrash(c){
+  c.crashed = true; c.crashT = T; S.crashes++;
+  if (eng){ eng.crash(ctx.currentTime + 0.005); drumMutedUntil = Math.floor(T / STEP) + 16; }
+  S.I = Math.min(S.I, 0.15);
+  setStreak(0, true);
+  S.shake = 1; S.glitch = 1; S.flash = 1;
+  ring(LANE_X[0], 0, PAL.tail, 1.6, 0.6);
+}
+
+/* ---------------------------------------------------------------- input */
+
+addEventListener('keydown', e => {
+  if (e.repeat) return;
+  if (!S.started){ start(); }
+  if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A'){ steer(-1); e.preventDefault(); }
+  else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D'){ steer(1); e.preventDefault(); }
+  else if (e.key >= '1' && e.key <= '8'){ const i = e.key.charCodeAt(0) - 49; tapAt((i + 0.5) / 8 * innerWidth, innerHeight * 0.42); }
+  else if (e.key === 'm' || e.key === 'M'){ S.muted = !S.muted; if (eng) eng.setMuted(S.muted); }
+});
+const ptr = { id: null, x0: 0, y0: 0, t0: 0, swiped: false };
+canvas.addEventListener('pointerdown', e => { ptr.id = e.pointerId; ptr.x0 = e.clientX; ptr.y0 = e.clientY; ptr.t0 = performance.now(); ptr.swiped = false; });
+canvas.addEventListener('pointermove', e => {
+  if (e.pointerId !== ptr.id || ptr.swiped) return;
+  const dx = e.clientX - ptr.x0, dy = e.clientY - ptr.y0;
+  if (Math.abs(dx) > 28 && Math.abs(dx) > Math.abs(dy) * 1.2){ ptr.swiped = true; if (!S.started) start(); steer(Math.sign(dx)); }
+});
+canvas.addEventListener('pointerup', e => {
+  if (e.pointerId !== ptr.id) return; ptr.id = null;
+  const dx = e.clientX - ptr.x0, dy = e.clientY - ptr.y0, dt = performance.now() - ptr.t0;
+  if (!S.started){ start(); return; }
+  if (!ptr.swiped && Math.hypot(dx, dy) < 12 && dt < 450) tapAt(e.clientX, e.clientY);
+});
+canvas.addEventListener('pointercancel', () => { ptr.id = null; });
+startEl.addEventListener('pointerup', () => start());
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('gesturestart', e => e.preventDefault());
+
+/* ---------------------------------------------------------------- frame */
+
+const dummy = new THREE.Object3D(), tmpC = new THREE.Color(), tmpV = new THREE.Vector3();
+let lastT = performance.now(), frameNo = 0;
+function frame(now){
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.1, (now - lastT) / 1000); lastT = now; frameNo++;
+  fpsEMA = lerp(fpsEMA, 1 / Math.max(dt, 1e-4), 0.05); frames++;
+  if (frames > 30 && frameNo % 30 === 0){
+    if (fpsEMA < 30 && resScale > 0.5){ resScale = Math.max(0.5, resScale * 0.88); sizeTargets(); }
+    else if (fpsEMA > 55 && resScale < 1){ resScale = Math.min(1, resScale * 1.04); sizeTargets(); }
+  }
+  T = songT();
+  const beatPhase = (T / BEAT) % 1, barPhase = (T / BAR) % 1, beat = Math.exp(-6 * beatPhase);
+  const scroll = (T * SPEED) % 512;
+  S.I = Math.max(0, S.I - 0.012 * dt);
+
+  // visual cues the sequencer left in song-time
+  if (seq) while (seq.events.length && seq.events[0].t <= T){ const ev = seq.events.shift();
+    if (ev.kind === 'drop'){ S.I = Math.min(1, S.I + 0.2); S.pulse = 1; S.pulseCol.copy(PAL.dash); ring(0, -6, PAL.dash, 4, 1.4); }
+    S.sunPulse = 1; }
+
+  // lane change tween, and the lean that goes with it
+  if (S.tw){ const k = clamp((T - S.tw.t0) / SWERVE, 0, 1); S.px = lerp(S.tw.from, S.tw.to, easeOut(k)); if (k >= 1) S.tw = null; }
+  const pxv = (S.px - S.pxPrev) / Math.max(dt, 1e-3); S.pxPrev = S.px;
+  S.roll = lerp(S.roll, clamp(-pxv * 0.045, -0.22, 0.22), 1 - Math.exp(-dt * 18));
+  player.position.x = S.px; player.rotation.z = S.roll;
+  scanner.position.x = Math.sin(T * Math.PI * 2 * 0.7) * 0.85;
+  scanEye.position.x = scanner.position.x * 0.5;
+  pHalo.material.opacity = 0.45 + 0.15 * beat;
+
+  // traffic: positions come straight off the clock
+  let n = 0;
+  for (const c of cars){
+    if (c.done) continue;
+    const z = (T - c.arrT) * REL; c.z = z;
+    if (z < -VIS) break;
+    if (z > 14){ c.done = true; continue; }
+    if (!c.crashed && z > -HIT_DZ && z < HIT_DZ && Math.abs(S.px - LANE_X[0]) < HIT_DX) doCrash(c);
+    if (!c.crashed && !c.passed && z >= 0) doPass(c);
+    let x = LANE_X[0], sy = 1;
+    if (c.crashed){ const k = (T - c.crashT) / 0.45; if (k > 1){ c.done = true; continue; } if (frameNo & 1) continue; x += (Math.random() - 0.5) * 0.5; sy = 1 - k * 0.6; }
+    if (n >= MAXCARS) break;
+    dummy.position.set(x, 0, z); dummy.scale.set(1, sy, 1); dummy.updateMatrix();
+    for (const m of carMeshes) m.setMatrixAt(n, dummy.matrix);
+    const fade = 1 - Math.pow(clamp((-z - 120) / 170, 0, 1), 1.5);
+    const fl = Math.exp(-(T - c.flash) * 5) * 2.5;
+    tmpC.copy(c.col).multiplyScalar(0.55 + 0.45 * beat + fl); carGlow.setColorAt(n, tmpC.multiplyScalar(fade));
+    tmpC.copy(c.col).lerp(white, Math.min(1, fl)); carBody.setColorAt(n, tmpC);
+    tmpC.copy(PAL.halo2).multiplyScalar(fade); carHalo.setColorAt(n, tmpC); carSmear.setColorAt(n, tmpC);
+    tmpC.copy(PAL.beam).multiplyScalar(fade); carBeam.setColorAt(n, tmpC);
+    n++;
+  }
+  while (cars.length && cars[0].done) cars.shift();
+  for (const m of carMeshes){ m.count = n; if (n){ m.instanceMatrix.needsUpdate = true; m.instanceColor.needsUpdate = true; } }
+
+  // poles
+  const off = scroll % POLE_D; let k = 0;
+  for (let i = 0; i < NPOLE; i++){ const z = -i * POLE_D + off + 12;
+    for (const sx of [-9.6, 9.6]){ dummy.position.set(sx, 0, z); dummy.scale.set(sx < 0 ? 1 : -1, 1, 1); dummy.updateMatrix();
+      poles.setMatrixAt(k, dummy.matrix); lamps.setMatrixAt(k, dummy.matrix); lampPool.setMatrixAt(k, dummy.matrix); k++; } }
+  for (const m of [poles, lamps, lampPool]){ m.count = k; m.instanceMatrix.needsUpdate = true; }
+
+  // effects
+  for (const r of rings){ if (!r.m.visible) continue; const q = (T - r.t0) / r.life; if (q > 1){ r.m.visible = false; continue; }
+    const s = 0.8 + 12 * r.size * easeOut(q); r.m.scale.set(s, 1, s * 0.85); r.m.material.opacity = Math.pow(1 - q, 2) * 0.9; }
+  for (const p of pillars){ if (!p.g.visible) continue; const q = (T - p.t0) / 1.1; if (q > 1){ p.g.visible = false; continue; }
+    const h = 3 + 22 * easeOut(Math.min(1, q * 2.5)); p.g.scale.set(1.2 + q, h, 1.2 + q); p.mat.opacity = Math.pow(1 - q, 1.6) * 0.9; }
+  S.shake *= Math.exp(-dt * 6); S.glitch *= Math.exp(-dt * 5); S.flash *= Math.exp(-dt * 7); S.pulse *= Math.exp(-dt * 4); S.sunPulse *= Math.exp(-dt * 5);
+  const motion = reduceMotion.matches ? 0 : 1;
+
+  // camera: a little behind, a little above, leaning into the lane change
+  const cx = S.px * 0.45, sh = S.shake * motion;
+  camera.position.set(cx + (Math.random() - 0.5) * 0.25 * sh, 3.0 + (Math.random() - 0.5) * 0.18 * sh, 9.2);
+  camera.up.set(Math.sin(S.roll * 0.35), Math.cos(S.roll * 0.35), 0);
+  camera.lookAt(cx, 0.4, -18);
+  camera.updateMatrixWorld();
+  tmpV.set(cx, 0, -60000).project(camera);
+  backMat.uniforms.uHor.value = tmpV.y; backMat.uniforms.uVpx.value = tmpV.x;
+  backMat.uniforms.uAspect.value = camera.aspect; backMat.uniforms.uTime.value = T; backMat.uniforms.uSunPulse.value = S.sunPulse * motion;
+  groundMat.uniforms.uScroll.value = scroll; groundMat.uniforms.uBeat.value = beat; groundMat.uniforms.uBarPhase.value = barPhase;
+
+  // render: scene → bright → blur ¼ → blur ⅛ → composite
+  renderer.setRenderTarget(rtScene); renderer.render(scene, camera);
+  quad.material = brightMat; brightMat.uniforms.tex.value = rtScene.texture; renderer.setRenderTarget(rtA); renderer.render(postScene, postCam);
+  quad.material = blurMat;
+  blurMat.uniforms.tex.value = rtA.texture; blurMat.uniforms.uDir.value.set(1 / rtA.width, 0); renderer.setRenderTarget(rtB); renderer.render(postScene, postCam);
+  blurMat.uniforms.tex.value = rtB.texture; blurMat.uniforms.uDir.value.set(0, 1 / rtA.height); renderer.setRenderTarget(rtA); renderer.render(postScene, postCam);
+  blurMat.uniforms.tex.value = rtA.texture; blurMat.uniforms.uDir.value.set(1 / rtC.width, 0); renderer.setRenderTarget(rtD); renderer.render(postScene, postCam);
+  blurMat.uniforms.tex.value = rtD.texture; blurMat.uniforms.uDir.value.set(0, 1 / rtC.height); renderer.setRenderTarget(rtC); renderer.render(postScene, postCam);
+  quad.material = compMat; const u = compMat.uniforms;
+  u.tScene.value = rtScene.texture; u.tB1.value = rtA.texture; u.tB2.value = rtC.texture;
+  u.uAber.value = 0.0025 + S.glitch * 0.03 * motion + S.pulse * 0.008; u.uGlitch.value = S.glitch * motion; u.uFlash.value = S.flash * 0.8;
+  u.uPulse.value = S.pulse; u.uPulseCol.value.copy(S.pulseCol); u.uTime.value = T; u.uRes.value.set(renderer.domElement.width, renderer.domElement.height);
+  renderer.setRenderTarget(null); renderer.render(postScene, postCam);
+
+  if (frameNo % 2 === 0) drawVoiceBox();
+}
+requestAnimationFrame(t => { lastT = t; requestAnimationFrame(frame); });
+
+// quiet hatch for tests and curious readers (see .claude/skills/verify)
+window.nr = {
+  S, cars, PROGS, KEY, BPM, SPEED, REL, LANE_X,
+  get T(){ return T; }, get frames(){ return frames; }, get fpsEMA(){ return fpsEMA; }, get resScale(){ return resScale; },
+  get ctx(){ return ctx; }, get eng(){ return eng; }, get seed(){ return seed; }, get nextStep(){ return nextStep; },
+  start, steer, tapAt, setProg, makeEngine, makeSequencer, chordAt, ensureTraffic, ready: true,
+};
+</script>
+</body>
+</html>
