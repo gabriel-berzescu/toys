@@ -45,7 +45,21 @@
   #label p{font-size:11px;letter-spacing:.08em;color:var(--dim);margin-top:.55em;line-height:1.7}
   @keyframes label{0%{opacity:0}7%{opacity:1}74%{opacity:1}100%{opacity:0}}
 
-  #hud{position:fixed;right:max(20px, env(safe-area-inset-right));top:max(18px, env(safe-area-inset-top));
+  #pause{position:fixed;right:max(18px, env(safe-area-inset-right));top:max(14px, env(safe-area-inset-top));z-index:3;
+    width:36px;height:30px;display:none;align-items:center;justify-content:center;cursor:pointer;color:var(--mag);
+    border:1px solid rgba(255,43,214,.3);background:rgba(10,4,16,.6);border-radius:6px;-webkit-tap-highlight-color:transparent;
+    transition:border-color .15s,box-shadow .15s}
+  #pause.show{display:flex}
+  #pause svg{fill:currentColor;filter:drop-shadow(0 0 5px rgba(255,43,214,.7))}
+  #pause .tri{display:none} #pause.paused .tri{display:block} #pause.paused .ii{display:none}
+  @media (hover:hover){ #pause:hover{border-color:var(--mag);box-shadow:0 0 10px rgba(255,43,214,.4)} }
+  #pause:focus-visible{outline:1px solid var(--cyan);outline-offset:2px}
+  #paused{position:fixed;inset:0;z-index:4;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.9rem;
+    background:rgba(6,3,12,.38);opacity:0;pointer-events:none;transition:opacity .25s}
+  #paused.show{opacity:1}
+  #paused h2{font-size:14px;font-weight:400;letter-spacing:.55em;color:var(--mag);text-shadow:0 0 12px rgba(255,43,214,.7);padding-left:.55em}
+  #paused p{font-size:11px;letter-spacing:.3em;color:var(--dim)}
+  #hud{position:fixed;right:max(20px, env(safe-area-inset-right));top:calc(max(14px, env(safe-area-inset-top)) + 38px);
     font-size:11px;letter-spacing:.26em;color:var(--dim);text-align:right;pointer-events:none;line-height:1.9}
   #hud b{font-weight:400;color:var(--cyan);text-shadow:0 0 8px rgba(34,230,255,.6);display:inline-block}
   #hud b.pop{animation:pop .32s ease}
@@ -77,6 +91,8 @@
 <canvas id="c"></canvas>
 <div id="start"><h1><span class="n">NIGHT</span><span class="r">RIDER</span></h1><p id="startp">press any key &middot; tap to start</p></div>
 <div id="label"><h1>night rider</h1><p id="labelp"></p></div>
+<button id="pause" aria-label="pause"><svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><g class="ii"><rect x="2" y="1.5" width="3" height="9"/><rect x="7" y="1.5" width="3" height="9"/></g><path class="tri" d="M2.5 1.5 L10.5 6 L2.5 10.5 Z"/></svg></button>
+<div id="paused"><h2>PAUSED</h2><p id="pausedp"></p></div>
 <div id="hud">streak <b id="streak">0</b><br>best <b id="best">0</b></div>
 <div id="dash">
   <button class="tg on" data-layer="drums">DRUMS</button>
@@ -94,8 +110,9 @@ import * as THREE from './three.module.min.js';
    night rider — a two-lane freeway that plays synthwave.
 
    Everything runs on one clock: the audio clock. The road's dashes pass at
-   one per beat, the light poles at one per two beats, and every car in the
-   slow lane is scheduled to reach you exactly on a sixteenth-note. Each car
+   one per beat, the shoulder reflectors at one per two beats, and every car
+   in the slow lane is scheduled to reach you exactly on a sixteenth-note.
+   Across the median, oncoming headlights arrive on the same grid. Each car
    carries a note of the bar's chord (its colour is its pitch class). Pass it
    and the note plays; the later you swerve, the brighter and louder it is.
    Hit it and the mix collapses for a bar. Tap the road to play a lead over
@@ -116,6 +133,10 @@ const TRAFFIC_V = 12;                   // m/s, the slow lane
 const REL   = SPEED - TRAFFIC_V;        // closing speed, m/s
 const VIS   = 270;                      // m, where traffic emerges from the fog
 const LANE_X = [1.8, -1.8];             // lane 1 (right, traffic), lane 2 (left, always empty)
+const ROAD_R = 3.6, ROAD_L = -12.8;     // our carriageway [-3.6, 3.6], median [-5.6, -3.6], theirs [-12.8, -5.6]
+const ONC_X = -11.0;                    // the oncoming outer lane; their inner lane (-7.4) is always empty
+const ONC_V = SPEED + TRAFFIC_V;        // closing speed of oncoming traffic
+const MAXONC = 16;
 const SWERVE = 0.32;                    // s, a lane change
 const HIT_DX = 1.5, HIT_DZ = 4.2;       // collision box (cars are 1.9 × 4.4)
 const KEY   = 45;                       // A2. Bass an octave down, pads/arp up, lead two up.
@@ -330,6 +351,12 @@ function makeEngine(ctx){
     n.connect(bp); bp.connect(g);
     if (pan){ pan.pan.value = dir * 0.6; g.connect(pan); pan.connect(bus); } else g.connect(bus);
   }
+  function doppler(t){
+    const n = noise(t, t + 0.7); const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.4;
+    bp.frequency.setValueAtTime(1500, t); bp.frequency.exponentialRampToValueAtTime(300, t + 0.5);
+    const g = ctx.createGain(); g.gain.setValueAtTime(E, t); g.gain.linearRampToValueAtTime(0.2, t + 0.07); g.gain.exponentialRampToValueAtTime(E, t + 0.6);
+    n.connect(bp); bp.connect(g); g.connect(pan(bus, -0.75));
+  }
   function riser(t, dur){
     const n = noise(t, t + dur + 0.1); const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 3;
     bp.frequency.setValueAtTime(150, t); bp.frequency.exponentialRampToValueAtTime(6000, t + dur);
@@ -339,7 +366,7 @@ function makeEngine(ctx){
   function setCutoff(hz){ lpf.frequency.setTargetAtTime(hz, ctx.currentTime, 0.08); }
   function setMuted(m){ master.gain.setTargetAtTime(m ? 0 : 0.82, ctx.currentTime, 0.03); }
 
-  return { ctx, kick, snare, hat, cym, bass, arp, pad, leadNote, tapNote, crash, whoosh, riser, setCutoff, setMuted, analyser, master, lpf };
+  return { ctx, kick, snare, hat, cym, bass, arp, pad, leadNote, tapNote, crash, whoosh, doppler, riser, setCutoff, setMuted, analyser, master, lpf };
 }
 
 // The arrangement. One chord per bar, four bars per progression. Every 32
@@ -392,7 +419,7 @@ function makeSequencer(eng, api){
 
 const S = {
   lane: 0, px: LANE_X[0], pxPrev: LANE_X[0], roll: 0, tw: null,
-  I: I0, streak: 0, best: 0, passes: 0, crashes: 0, taps: 0, muted: false, started: false,
+  I: I0, streak: 0, best: 0, passes: 0, crashes: 0, taps: 0, muted: false, started: false, paused: false,
   prog: 0, layers: { drums: true, bass: true, arp: true, pad: true },
   shake: 0, glitch: 0, flash: 0, pulse: 0, pulseCol: new THREE.Color(1, 1, 1), sunPulse: 0,
 };
@@ -405,8 +432,14 @@ const chordAt = bar => PROGS[S.prog].chords[((bar % 4) + 4) % 4];
 
 /* ------------------------------------------------------------- traffic */
 
-const cars = [];
+const cars = [], oncoming = [];
 let genBar = -1, bar0 = 0, motif = MOTIFS[0], motifK = 0, phrase = PH.intro[0];
+const ONC_P = [[], [0], [8], [0, 8], [4], [12], [2, 10], [0, 6], [0, 8, 12]];
+function genOncomingBar(bar){
+  if (bar - bar0 < 3) return;                                  // 270 m at closing speed is about three bars
+  for (const s of ONC_P[Math.floor(rng() * ONC_P.length)]){ const step = bar * 16 + s;
+    oncoming.push({ step, arrT: step * STEP, passed: false, done: false, z: -1e9 }); }
+}
 function setCarNote(c){
   const ch = chordAt(c.bar);
   const tones = [ch.tones[0], ch.tones[1], ch.tones[2], ch.tones[3], ch.tones[0] + 12, ch.tones[1] + 12];
@@ -414,6 +447,7 @@ function setCarNote(c){
   c.col.setHSL(c.hue / 360, 1, 0.6, THREE.SRGBColorSpace);
 }
 function genTrafficBar(bar){
+  genOncomingBar(bar);
   const rel = bar - bar0; if (rel < 6) return;               // the first car needs 15 s to arrive from the fog
   const p = Math.floor((rel - 6) / 4), i = (rel - 6) & 3;
   if (i === 0){
@@ -452,7 +486,8 @@ const PAL = {
   top: C(0x05020b), mid: C(0x1a0836), hor: C(0x4a1452), sunA: C(0xffe066), sunB: C(0xff2d8f), halo: C(0xff4f9e),
   mtnFar: C(0x1a0b30), mtnNear: C(0x0c0518), city: C(0x08030f), ground: C(0x06030c), win1: C(0xffd36a), win2: C(0x5ff0ff),
   asphalt: C(0x0d0b14), edge: C(0xff2bd6), dash: C(0x22e6ff), grid: C(0x9a1ee0), gridHi: C(0xff5ce6), refl: C(0xff6a4a),
-  tail: C(0xff2233), halo2: C(0xff3040), lamp: C(0x4be7ff), beam: C(0x8fa8ff), scanner: C(0xff1c24),
+  tail: C(0xff2233), halo2: C(0xff3040), beam: C(0x8fa8ff), head: C(0xdfe9ff), amber: C(0xffb020),
+  refWhite: C(0xfff4e0), refRed: C(0xff3a3a),
 };
 
 /* fullscreen triangle helper (NDC) */
@@ -528,30 +563,37 @@ const backdrop = new THREE.Mesh(triGeo, backMat); backdrop.frustumCulled = false
 const groundMat = new THREE.ShaderMaterial({
   transparent: true, depthWrite: true, fog: false,
   uniforms: {
-    uScroll: { value: 0 }, uBeat: { value: 0 }, uBarPhase: { value: 0 },
-    cAsphalt: { value: PAL.asphalt }, cEdge: { value: PAL.edge }, cDash: { value: PAL.dash }, cGrid: { value: PAL.grid },
+    uScroll: { value: 0 }, uBeat: { value: 0 }, uBarPhase: { value: 0 }, uSunX: { value: 0 },
+    cAsphalt: { value: PAL.asphalt }, cEdge: { value: PAL.edge }, cAmber: { value: PAL.amber }, cDash: { value: PAL.dash }, cGrid: { value: PAL.grid },
     cGridHi: { value: PAL.gridHi }, cGround: { value: PAL.ground }, cRefl: { value: PAL.refl },
   },
   vertexShader: `varying vec3 vW; void main(){ vW = (modelMatrix * vec4(position, 1.0)).xyz; gl_Position = projectionMatrix * viewMatrix * vec4(vW, 1.0); }`,
   fragmentShader: `
     precision highp float;
     varying vec3 vW;
-    uniform float uScroll, uBeat, uBarPhase;
-    uniform vec3 cAsphalt, cEdge, cDash, cGrid, cGridHi, cGround, cRefl;
+    uniform float uScroll, uBeat, uBarPhase, uSunX;
+    uniform vec3 cAsphalt, cEdge, cAmber, cDash, cGrid, cGridHi, cGround, cRefl;
     float g(float u, float period, float w){ float f = abs(fract(u / period) - 0.5) * period; return 1.0 - smoothstep(w, w + fwidth(u) * 1.2, f); }
     void main(){
       float x = vW.x, z = vW.z + uScroll, dist = max(0.0, -vW.z);
-      float ax = abs(x), aw = fwidth(x) * 1.2;
-      float onRoad = 1.0 - smoothstep(3.78, 3.78 + aw, ax);
+      float aw = fwidth(x) * 1.2, ln = 0.09;
+      // our two lanes on the right, a dark median, two oncoming lanes on the left
+      float onRoad = smoothstep(-12.98, -12.98 + aw, x) * (1.0 - smoothstep(3.78, 3.78 + aw, x));
+      float onMedian = smoothstep(-5.6, -5.6 + aw, x) * (1.0 - smoothstep(-3.6, -3.6 + aw, x));
+      float tarmac = onRoad * (1.0 - onMedian);
       float n = fract(sin(dot(floor(vec2(x, z) * 2.0), vec2(12.9898, 78.233))) * 43758.5453);
-      vec3 col = mix(cGround, cAsphalt * (0.8 + 0.4 * n), onRoad);
-      col += cRefl * exp(-ax * 0.5) * smoothstep(15.0, 220.0, dist) * 0.55 * onRoad;
-      float edge = 1.0 - smoothstep(0.09, 0.09 + aw, abs(ax - 3.6));
+      vec3 col = mix(cGround, cAsphalt * (0.8 + 0.4 * n), tarmac);
+      col += cRefl * exp(-abs(x - uSunX) * 0.5) * smoothstep(15.0, 220.0, dist) * 0.55 * tarmac;
+      float edge = max(1.0 - smoothstep(ln, ln + aw, abs(x - 3.6)), 1.0 - smoothstep(ln, ln + aw, abs(x + 12.8)));
       col = mix(col, cEdge * 1.1, edge);
-      float dash = (1.0 - smoothstep(0.075, 0.075 + aw, ax)) * (1.0 - smoothstep(0.26, 0.26 + fwidth(z) / 16.0, fract(z / 16.0)));
+      float med = max(1.0 - smoothstep(0.06, 0.06 + aw, abs(x + 3.6)), 1.0 - smoothstep(0.06, 0.06 + aw, abs(x + 5.6)));
+      col = mix(col, cAmber * 0.55, med);
+      float dashX = max(1.0 - smoothstep(0.075, 0.075 + aw, abs(x)), 1.0 - smoothstep(0.075, 0.075 + aw, abs(x + 9.2)));
+      float dash = dashX * (1.0 - smoothstep(0.26, 0.26 + fwidth(z) / 16.0, fract(z / 16.0)));
       col = mix(col, cDash * (0.8 + 0.4 * uBeat), dash);
       float off = 1.0 - onRoad;
-      float gx = g(ax - 3.6, 8.0, 0.05), gz = g(z, 8.0, 0.05);
+      float gx = x > -4.6 ? g(x - 3.6, 8.0, 0.05) : g(-12.8 - x, 8.0, 0.05);
+      float gz = g(z, 8.0, 0.05);
       float wave = exp(-abs(dist - (1.0 - uBarPhase) * 300.0) / 22.0);
       float gridA = max(gx, gz) * off * exp(-dist / 110.0) * (1.0 - smoothstep(140.0, 300.0, dist));
       vec3 gridC = mix(cGrid, cGridHi, 0.35 * uBeat + 0.65 * wave);
@@ -643,6 +685,20 @@ const white = new THREE.Color(1, 1, 1);
 for (const m of carMeshes){ m.frustumCulled = false; m.count = 0; for (let i = 0; i < MAXCARS; i++) m.setColorAt(i, white); scene.add(m); }
 carGlow.renderOrder = 2; carSmear.renderOrder = 2; carBeam.renderOrder = 1; carHalo.renderOrder = 3;
 
+/* ---- oncoming (instanced, rotated to face us): headlights, no note ---- */
+const oncBodyGeo = boxes(carBoxes(0x0e0c18));
+const oncLightGeo = boxes([-0.62, 0.62].map(x => ({ x0:x-0.26, x1:x+0.26, y0:0.44, y1:0.56, z0:-2.26, z1:-2.2, col: lin(0xeef4ff), shade:[1,1,1,1,1,1] })));
+const oncHaloGeo = quads([{ x:-0.62, y:0.5, z:-2.3, w:1.7, h:0.85 }, { x:0.62, y:0.5, z:-2.3, w:1.7, h:0.85 }]);
+const oncSmearGeo = quads([{ x:-0.62, y:0.03, z:-4.8, w:0.9, h:5, flat:true, flipV:true }, { x:0.62, y:0.03, z:-4.8, w:0.9, h:5, flat:true, flipV:true }]);
+const oncBody = new THREE.InstancedMesh(oncBodyGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }), MAXONC);
+const oncLight = new THREE.InstancedMesh(oncLightGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }), MAXONC);
+const oncHalo = new THREE.InstancedMesh(oncHaloGeo, glowMat(radialTex, 0xffffff, 1), MAXONC);
+const oncSmear = new THREE.InstancedMesh(oncSmearGeo, glowMat(smearTex, 0xffffff, 0.28), MAXONC);
+const oncBeam = new THREE.InstancedMesh(carBeamGeo, glowMat(radialTex, 0xffffff, 0.42), MAXONC);
+const oncMeshes = [oncBody, oncLight, oncHalo, oncSmear, oncBeam];
+for (const m of oncMeshes){ m.frustumCulled = false; m.count = 0; for (let i = 0; i < MAXONC; i++) m.setColorAt(i, white); scene.add(m); }
+oncSmear.renderOrder = 2; oncBeam.renderOrder = 1; oncHalo.renderOrder = 3;
+
 /* ---- the player: black, low, a red bar at the back and a red eye up front ---- */
 const player = new THREE.Group(); scene.add(player);
 const pBody = new THREE.Mesh(boxes(carBoxes(0x2a2742)), new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }));
@@ -652,22 +708,66 @@ const pHalo = new THREE.Mesh(quads([{ x:0, y:0.5, z:2.32, w:2.2, h:0.55 }]), glo
 const pSmear = new THREE.Mesh(quads([{ x:0, y:0.03, z:2.3+3.8, w:2.2, h:7.6, flat:true }]), glowMat(smearTex, PAL.tail, 0.3));
 const pGlow = new THREE.Mesh(quads([{ x:0, y:0.02, z:0, w:3.2, h:6, flat:true }]), glowMat(radialTex, PAL.tail, 0.28));
 const pHead = new THREE.Mesh(quads([{ x:0, y:0.03, z:-8.5, w:6, h:13, flat:true }]), glowMat(radialTex, PAL.beam, 0.3));
-const scanner = new THREE.Mesh(quads([{ x:0, y:0.035, z:-3.7, w:1.6, h:3.0, flat:true }]), glowMat(radialTex, PAL.scanner, 0.75));
-const scanEye = new THREE.Mesh(boxes([{ x0:-0.55, x1:0.55, y0:0.4, y1:0.46, z0:-2.22, z1:-2.16, col: lin(0xff1a2a), shade:[1,1,1,1,1,1] }]),
-  new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }));
-for (const m of [pBody, pBar, pHalo, pSmear, pGlow, pHead, scanner, scanEye]) player.add(m);
-pHalo.renderOrder = 3; pSmear.renderOrder = 2; pGlow.renderOrder = 2; pHead.renderOrder = 1; scanner.renderOrder = 2;
+for (const m of [pBody, pBar, pHalo, pSmear, pGlow, pHead]) player.add(m);
+pHalo.renderOrder = 3; pSmear.renderOrder = 2; pGlow.renderOrder = 2; pHead.renderOrder = 1;
 
-/* ---- light poles: one every two beats of road ---- */
-const NPOLE = 20, POLE_D = SPEED * BEAT * 2;   // 32 m
-const poleGeo = boxes([{ x0:-0.07, x1:0.07, y0:0, y1:5.2, z0:-0.07, z1:0.07, col: lin(0x14101f) },
-  { x0:-0.07, x1:1.4, y0:5.1, y1:5.2, z0:-0.07, z1:0.07, col: lin(0x14101f) }]);
-const poles = new THREE.InstancedMesh(poleGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }), NPOLE * 2);
-const lampGeo = quads([{ x:1.0, y:5.15, z:0, w:1.6, h:0.5 }]);
-const lamps = new THREE.InstancedMesh(lampGeo, glowMat(radialTex, PAL.lamp, 0.9), NPOLE * 2);
-const lampPool = new THREE.InstancedMesh(quads([{ x:0.6, y:0.03, z:0, w:7, h:9, flat:true }]), glowMat(radialTex, PAL.lamp, 0.14), NPOLE * 2);
-for (const m of [poles, lamps, lampPool]){ m.frustumCulled = false; scene.add(m); }
-lampPool.renderOrder = 1; lamps.renderOrder = 3;
+/* ---- roadside, outside the city: reflector posts, palms, the odd billboard ---- */
+const LOOP = 800;
+const NPOST = 24, POST_D = SPEED * BEAT * 2;   // a reflector every two beats keeps the speed legible
+const posts = new THREE.InstancedMesh(boxes([{ x0:-0.05, x1:0.05, y0:0, y1:1.1, z0:-0.05, z1:0.05, col: lin(0x14101f) }]),
+  new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }), NPOST * 2);
+const refls = new THREE.InstancedMesh(quads([{ x:0, y:1.0, z:0.06, w:0.26, h:0.16 }]),
+  new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }), NPOST * 2);
+for (let i = 0; i < NPOST * 2; i++) refls.setColorAt(i, (i & 1) ? PAL.refWhite : PAL.refRed);   // white on our shoulder, red on theirs
+
+function palmGeo(){
+  const pos = [], col = [], idx = []; let n = 0; const c = lin(0x150b28);
+  const quad = (a, b, cc, d) => { for (const v of [a, b, cc, d]){ pos.push(...v); col.push(...c); } idx.push(n, n+1, n+2, n, n+2, n+3); n += 4; };
+  const H = 9, r0 = 0.3, r1 = 0.16;
+  for (let k = 0; k < 4; k++){ const a0 = k * Math.PI / 2, a1 = a0 + Math.PI / 2;
+    quad([Math.cos(a0)*r0, 0, Math.sin(a0)*r0], [Math.cos(a1)*r0, 0, Math.sin(a1)*r0], [Math.cos(a1)*r1, H, Math.sin(a1)*r1], [Math.cos(a0)*r1, H, Math.sin(a0)*r1]); }
+  const NF = 9;
+  for (let k = 0; k < NF; k++){ const a = k / NF * Math.PI * 2 + 0.3, L = 3.2 + (k % 3) * 0.45, droop = 1.3 + (k % 2) * 0.6, w = 0.55;
+    const dx = Math.cos(a), dz = Math.sin(a), px = -dz, pz = dx;
+    const mid = [dx * L * 0.5, H + 0.4 - droop * 0.2, dz * L * 0.5], tip = [dx * L, H - droop, dz * L];
+    quad([0, H + 0.3, 0], [mid[0] + px * w, mid[1], mid[2] + pz * w], tip, [mid[0] - px * w, mid[1], mid[2] - pz * w]); }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); g.setIndex(idx); return g;
+}
+const NPALM = 40, palmSpec = [];
+for (let i = 0; i < NPALM; i++){ const side = rng() < 0.5 ? -1 : 1;
+  palmSpec.push({ x: side * (17 + rng() * 26) + (side < 0 ? -7 : 0), z0: rng() * LOOP, s: 0.7 + rng() * 0.6, ry: rng() * Math.PI * 2, lean: (rng() - 0.5) * 0.16 }); }
+const palms = new THREE.InstancedMesh(palmGeo(), new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }), NPALM);
+for (const m of [posts, refls, palms]){ m.frustumCulled = false; scene.add(m); }
+
+function billboardTex(v){
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 128; const g = cv.getContext('2d');
+  g.fillStyle = '#0a0512'; g.fillRect(0, 0, 256, 128);
+  const M = '#ff2bd6', CY = '#22e6ff', A = '#ffb020';
+  if (v === 0){
+    const gr = g.createLinearGradient(0, 26, 0, 102); gr.addColorStop(0, '#ffe066'); gr.addColorStop(1, '#ff2d8f');
+    g.fillStyle = gr; g.beginPath(); g.arc(70, 64, 38, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#0a0512'; for (let i = 0; i < 5; i++) g.fillRect(20, 66 + i * 8, 100, 2 + i);
+    g.fillStyle = CY; for (let i = 0; i < 4; i++) g.fillRect(140, 30 + i * 20, 92 - i * 18, 6);
+  } else if (v === 1){
+    for (let i = 0; i < 6; i++){ g.fillStyle = i % 2 ? M : CY; g.fillRect(24, 18 + i * 16, 60 + ((i * 53) % 130), 8); }
+    g.fillStyle = A; g.fillRect(200, 22, 32, 32);
+  } else {
+    g.fillStyle = A; for (let i = 0; i < 9; i++){ const w = 8 + (i * 37) % 20; g.fillRect(20 + i * 24, 30, w, 14); g.fillRect(20 + i * 24, 84, 6 + w % 9, 14); }
+    g.fillStyle = M; g.beginPath(); g.moveTo(60, 74); g.lineTo(196, 74); g.lineTo(128, 52); g.closePath(); g.fill();
+  }
+  g.strokeStyle = M; g.lineWidth = 4; g.strokeRect(4, 4, 248, 120);
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.minFilter = THREE.LinearMipmapLinearFilter; return t;
+}
+const BILL_D = 256, bills = [];                  // one every eight bars, alternating sides
+for (let k = 0; k < 3; k++){
+  const side = k % 2 ? -1 : 1, grp = new THREE.Group();
+  grp.add(new THREE.Mesh(quads([{ x:0, y:7.8, z:0, w:9, h:4.5 }]), new THREE.MeshBasicMaterial({ map: billboardTex(k), side: THREE.DoubleSide })));
+  grp.add(new THREE.Mesh(boxes([-3, 3].map(x => ({ x0:x-0.12, x1:x+0.12, y0:0, y1:5.7, z0:-0.12, z1:0.12, col: lin(0x14101f) }))),
+    new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide })));
+  grp.position.x = side > 0 ? 13 : -22.5; grp.rotation.y = -side * 0.22; scene.add(grp);
+  bills.push({ grp, z0: k * BILL_D + 100 });
+}
 
 /* ---- effects pools: rings on the road, pillars where you touch it ---- */
 const ringGeo = new THREE.RingGeometry(0.93, 1, 64); ringGeo.rotateX(-Math.PI / 2);
@@ -751,7 +851,15 @@ frameCamera(); sizeTargets();
 
 const $ = id => document.getElementById(id);
 const startEl = $('start'), labelEl = $('label'), streakEl = $('streak'), bestEl = $('best'), progBtn = $('prog'), vbc = $('vbc');
-$('labelp').innerHTML = coarse ? 'swipe to change lanes &middot; tap the road to play<br>pass close for a brighter note' : '&larr; &rarr; change lanes &middot; click the road to play<br>pass close for a brighter note';
+$('labelp').innerHTML = coarse ? 'swipe to change lanes &middot; tap the road to play<br>pass close for a brighter note' : '&larr; &rarr; change lanes &middot; click the road to play<br>pass close for a brighter note &middot; space pauses';
+$('pausedp').innerHTML = coarse ? 'tap to resume' : 'space &middot; click to resume';
+const pauseBtn = $('pause'), pausedEl = $('paused');
+function setPaused(p){
+  if (!S.started || S.paused === p) return; S.paused = p;
+  if (p) ctx.suspend(); else ctx.resume();
+  pausedEl.classList.toggle('show', p); pauseBtn.classList.toggle('paused', p); pauseBtn.setAttribute('aria-label', p ? 'resume' : 'pause');
+}
+pauseBtn.addEventListener('click', () => { setPaused(!S.paused); pauseBtn.blur(); });
 $('startp').innerHTML = coarse ? 'tap to start' : 'press any key &middot; click to start';
 bestEl.textContent = S.best;
 function setStreak(n, crashed){
@@ -801,8 +909,8 @@ function start(){
   };
   seqTimer = setInterval(tick, 25); tick();
   if (ctx.state !== 'running') ctx.resume();
-  startEl.classList.add('gone'); labelEl.classList.add('show');
-  document.addEventListener('visibilitychange', () => { if (document.hidden) ctx.suspend(); else ctx.resume(); });
+  startEl.classList.add('gone'); labelEl.classList.add('show'); pauseBtn.classList.add('show');
+  document.addEventListener('visibilitychange', () => { if (document.hidden) ctx.suspend(); else if (!S.paused) ctx.resume(); });
 }
 
 /* ------------------------------------------------------------------ play */
@@ -851,7 +959,10 @@ function doCrash(c){
 
 addEventListener('keydown', e => {
   if (e.repeat) return;
+  if (e.key === ' ' && e.target && e.target.tagName === 'BUTTON') return;   // a focused dashboard button owns Space
+  if (e.key === ' ' || e.key === 'p' || e.key === 'P' || e.key === 'Escape'){ if (S.started) setPaused(!S.paused); else start(); e.preventDefault(); return; }
   if (!S.started){ start(); }
+  if (S.paused) return;
   if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A'){ steer(-1); e.preventDefault(); }
   else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D'){ steer(1); e.preventDefault(); }
   else if (e.key >= '1' && e.key <= '8'){ const i = e.key.charCodeAt(0) - 49; tapAt((i + 0.5) / 8 * innerWidth, innerHeight * 0.42); }
@@ -860,7 +971,7 @@ addEventListener('keydown', e => {
 const ptr = { id: null, x0: 0, y0: 0, t0: 0, swiped: false };
 canvas.addEventListener('pointerdown', e => { ptr.id = e.pointerId; ptr.x0 = e.clientX; ptr.y0 = e.clientY; ptr.t0 = performance.now(); ptr.swiped = false; });
 canvas.addEventListener('pointermove', e => {
-  if (e.pointerId !== ptr.id || ptr.swiped) return;
+  if (e.pointerId !== ptr.id || ptr.swiped || S.paused) return;
   const dx = e.clientX - ptr.x0, dy = e.clientY - ptr.y0;
   if (Math.abs(dx) > 28 && Math.abs(dx) > Math.abs(dy) * 1.2){ ptr.swiped = true; if (!S.started) start(); steer(Math.sign(dx)); }
 });
@@ -868,6 +979,7 @@ canvas.addEventListener('pointerup', e => {
   if (e.pointerId !== ptr.id) return; ptr.id = null;
   const dx = e.clientX - ptr.x0, dy = e.clientY - ptr.y0, dt = performance.now() - ptr.t0;
   if (!S.started){ start(); return; }
+  if (S.paused){ setPaused(false); return; }
   if (!ptr.swiped && Math.hypot(dx, dy) < 12 && dt < 450) tapAt(e.clientX, e.clientY);
 });
 canvas.addEventListener('pointercancel', () => { ptr.id = null; });
@@ -890,7 +1002,7 @@ function frame(now){
   T = songT();
   const beatPhase = (T / BEAT) % 1, barPhase = (T / BAR) % 1, beat = Math.exp(-6 * beatPhase);
   const scroll = (T * SPEED) % 512;
-  S.I = Math.max(0, S.I - 0.012 * dt);
+  if (!S.paused) S.I = Math.max(0, S.I - 0.012 * dt);
 
   // visual cues the sequencer left in song-time
   if (seq) while (seq.events.length && seq.events[0].t <= T){ const ev = seq.events.shift();
@@ -902,9 +1014,6 @@ function frame(now){
   const pxv = (S.px - S.pxPrev) / Math.max(dt, 1e-3); S.pxPrev = S.px;
   S.roll = lerp(S.roll, clamp(-pxv * 0.045, -0.22, 0.22), 1 - Math.exp(-dt * 18));
   player.position.x = S.px; player.rotation.z = S.roll;
-  scanner.position.x = Math.sin(T * Math.PI * 2 * 0.7) * 0.85;
-  scanEye.position.x = scanner.position.x * 0.5;
-  pHalo.material.opacity = 0.45 + 0.15 * beat;
 
   // traffic: positions come straight off the clock
   let n = 0;
@@ -918,7 +1027,7 @@ function frame(now){
     let x = LANE_X[0], sy = 1;
     if (c.crashed){ const k = (T - c.crashT) / 0.45; if (k > 1){ c.done = true; continue; } if (frameNo & 1) continue; x += (Math.random() - 0.5) * 0.5; sy = 1 - k * 0.6; }
     if (n >= MAXCARS) break;
-    dummy.position.set(x, 0, z); dummy.scale.set(1, sy, 1); dummy.updateMatrix();
+    dummy.position.set(x, 0, z); dummy.rotation.set(0, 0, 0); dummy.scale.set(1, sy, 1); dummy.updateMatrix();
     for (const m of carMeshes) m.setMatrixAt(n, dummy.matrix);
     const fade = 1 - Math.pow(clamp((-z - 120) / 170, 0, 1), 1.5);
     const fl = Math.exp(-(T - c.flash) * 5) * 2.5;
@@ -931,12 +1040,34 @@ function frame(now){
   while (cars.length && cars[0].done) cars.shift();
   for (const m of carMeshes){ m.count = n; if (n){ m.instanceMatrix.needsUpdate = true; m.instanceColor.needsUpdate = true; } }
 
-  // poles
-  const off = scroll % POLE_D; let k = 0;
-  for (let i = 0; i < NPOLE; i++){ const z = -i * POLE_D + off + 12;
-    for (const sx of [-9.6, 9.6]){ dummy.position.set(sx, 0, z); dummy.scale.set(sx < 0 ? 1 : -1, 1, 1); dummy.updateMatrix();
-      poles.setMatrixAt(k, dummy.matrix); lamps.setMatrixAt(k, dummy.matrix); lampPool.setMatrixAt(k, dummy.matrix); k++; } }
-  for (const m of [poles, lamps, lampPool]){ m.count = k; m.instanceMatrix.needsUpdate = true; }
+  // oncoming: headlights on the far carriageway, a doppler as each one passes
+  let m = 0;
+  for (const c of oncoming){
+    if (c.done) continue;
+    const z = (T - c.arrT) * ONC_V; c.z = z;
+    if (z < -VIS) break;
+    if (z > 16){ c.done = true; continue; }
+    if (!c.passed && z >= 0){ c.passed = true; if (eng && !S.paused) eng.doppler(ctx.currentTime + 0.005); }
+    if (m >= MAXONC) break;
+    dummy.position.set(ONC_X, 0, z); dummy.rotation.set(0, Math.PI, 0); dummy.scale.set(1, 1, 1); dummy.updateMatrix();
+    for (const mesh of oncMeshes) mesh.setMatrixAt(m, dummy.matrix);
+    const fade = 1 - Math.pow(clamp((-z - 150) / 140, 0, 1), 1.5);
+    tmpC.copy(PAL.head).multiplyScalar(fade); oncHalo.setColorAt(m, tmpC); oncSmear.setColorAt(m, tmpC); oncBeam.setColorAt(m, tmpC);
+    m++;
+  }
+  while (oncoming.length && oncoming[0].done) oncoming.shift();
+  for (const mesh of oncMeshes){ mesh.count = m; if (m){ mesh.instanceMatrix.needsUpdate = true; mesh.instanceColor.needsUpdate = true; } }
+
+  // roadside
+  const off = scroll % POST_D; let k = 0;
+  for (let i = 0; i < NPOST; i++){ const z = -i * POST_D + off + 12;
+    for (const sx of [-13.6, 4.4]){ dummy.position.set(sx, 0, z); dummy.rotation.set(0, 0, 0); dummy.scale.set(1, 1, 1); dummy.updateMatrix();
+      posts.setMatrixAt(k, dummy.matrix); refls.setMatrixAt(k, dummy.matrix); k++; } }
+  for (const mesh of [posts, refls]){ mesh.count = k; mesh.instanceMatrix.needsUpdate = true; }
+  for (let i = 0; i < NPALM; i++){ const p = palmSpec[i], z = ((p.z0 + scroll) % LOOP) - LOOP + 20;
+    dummy.position.set(p.x, 0, z); dummy.rotation.set(0, p.ry, p.lean); dummy.scale.set(p.s, p.s, p.s); dummy.updateMatrix(); palms.setMatrixAt(i, dummy.matrix); }
+  palms.instanceMatrix.needsUpdate = true;
+  for (const b of bills) b.grp.position.z = ((b.z0 + scroll) % (BILL_D * 3)) - BILL_D * 3 + 20;
 
   // effects
   for (const r of rings){ if (!r.m.visible) continue; const q = (T - r.t0) / r.life; if (q > 1){ r.m.visible = false; continue; }
@@ -947,7 +1078,7 @@ function frame(now){
   const motion = reduceMotion.matches ? 0 : 1;
 
   // camera: a little behind, a little above, leaning into the lane change
-  const cx = S.px * 0.45, sh = S.shake * motion;
+  const cx = S.px * 0.45 - 2.0, sh = S.shake * motion;   // a little left, to frame both carriageways
   camera.position.set(cx + (Math.random() - 0.5) * 0.25 * sh, 3.0 + (Math.random() - 0.5) * 0.18 * sh, 9.2);
   camera.up.set(Math.sin(S.roll * 0.35), Math.cos(S.roll * 0.35), 0);
   camera.lookAt(cx, 0.4, -18);
@@ -955,7 +1086,7 @@ function frame(now){
   tmpV.set(cx, 0, -60000).project(camera);
   backMat.uniforms.uHor.value = tmpV.y; backMat.uniforms.uVpx.value = tmpV.x;
   backMat.uniforms.uAspect.value = camera.aspect; backMat.uniforms.uTime.value = T; backMat.uniforms.uSunPulse.value = S.sunPulse * motion;
-  groundMat.uniforms.uScroll.value = scroll; groundMat.uniforms.uBeat.value = beat; groundMat.uniforms.uBarPhase.value = barPhase;
+  groundMat.uniforms.uScroll.value = scroll; groundMat.uniforms.uBeat.value = beat; groundMat.uniforms.uBarPhase.value = barPhase; groundMat.uniforms.uSunX.value = cx;
 
   // render: scene → bright → blur ¼ → blur ⅛ → composite
   renderer.setRenderTarget(rtScene); renderer.render(scene, camera);
@@ -977,10 +1108,10 @@ requestAnimationFrame(t => { lastT = t; requestAnimationFrame(frame); });
 
 // quiet hatch for tests and curious readers (see .claude/skills/verify)
 window.nr = {
-  S, cars, PROGS, KEY, BPM, SPEED, REL, LANE_X,
+  S, cars, oncoming, PROGS, KEY, BPM, SPEED, REL, ONC_V, LANE_X, ONC_X,
   get T(){ return T; }, get frames(){ return frames; }, get fpsEMA(){ return fpsEMA; }, get resScale(){ return resScale; },
   get ctx(){ return ctx; }, get eng(){ return eng; }, get seed(){ return seed; }, get nextStep(){ return nextStep; },
-  start, steer, tapAt, setProg, makeEngine, makeSequencer, chordAt, ensureTraffic, ready: true,
+  start, steer, tapAt, setProg, setPaused, makeEngine, makeSequencer, chordAt, ensureTraffic, ready: true,
 };
 </script>
 </body>
