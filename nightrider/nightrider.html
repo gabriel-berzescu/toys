@@ -80,8 +80,23 @@
   #vbc{width:84px;height:44px;display:block}
   #prog{border:0;background:none;color:var(--cyan);font:inherit;font-size:9.5px;letter-spacing:.28em;cursor:pointer;
     padding:3px 8px;text-shadow:0 0 8px rgba(34,230,255,.6);-webkit-tap-highlight-color:transparent}
-  #prog:focus-visible,.tg:focus-visible{outline:1px solid var(--cyan);outline-offset:2px}
-  @media (max-width:420px){ .tg{width:56px;font-size:9px;letter-spacing:.14em;padding:8px 0} #vbc{width:72px} #vb{margin:0 2px} }
+  #prog:focus-visible,.tg:focus-visible,#vols:focus-visible{outline:1px solid var(--cyan);outline-offset:2px}
+  #vol{display:flex;flex-direction:column;align-items:center;gap:6px;width:66px;padding:8px 8px 7px;border-radius:6px;
+    border:1px solid rgba(255,43,214,.26);background:rgba(10,4,16,.72)}
+  #vol span{font-size:10px;letter-spacing:.22em;color:rgba(255,43,214,.5);pointer-events:none}
+  #vols{-webkit-appearance:none;appearance:none;width:100%;height:14px;margin:0;background:none;cursor:pointer;
+    -webkit-tap-highlight-color:transparent;touch-action:none}
+  #vols::-webkit-slider-runnable-track{height:3px;border-radius:2px;
+    background:linear-gradient(90deg,var(--mag) var(--p,100%),rgba(255,43,214,.18) var(--p,100%))}
+  #vols::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:10px;height:10px;border-radius:50%;margin-top:-3.5px;
+    background:#ffd9f6;border:1px solid var(--mag);box-shadow:0 0 8px rgba(255,43,214,.8)}
+  #vols::-moz-range-track{height:3px;border-radius:2px;
+    background:linear-gradient(90deg,var(--mag) var(--p,100%),rgba(255,43,214,.18) var(--p,100%))}
+  #vols::-moz-range-thumb{width:8px;height:8px;border-radius:50%;background:#ffd9f6;border:1px solid var(--mag);
+    box-shadow:0 0 8px rgba(255,43,214,.8)}
+  @media (hover:hover){ #vol:hover{border-color:rgba(255,43,214,.7)} #vol:hover span{color:#ffd9f6} }
+  @media (max-width:420px){ .tg{width:56px;font-size:9px;letter-spacing:.14em;padding:8px 0} #vbc{width:72px} #vb{margin:0 2px}
+    #vol{width:56px;padding:7px 6px 6px} #vol span{font-size:9px;letter-spacing:.14em} }
 
   #nogl{position:fixed;inset:0;display:none;align-items:center;justify-content:center;text-align:center;
     padding:2rem;color:var(--dim);font-size:13px;letter-spacing:.08em;line-height:1.9}
@@ -100,6 +115,7 @@
   <div id="vb"><canvas id="vbc"></canvas><button id="prog" aria-label="cycle chord progression">ANTHEM</button></div>
   <button class="tg on" data-layer="arp">ARP</button>
   <button class="tg on" data-layer="pad">PAD</button>
+  <div id="vol"><input id="vols" type="range" min="0" max="100" step="1" value="100" aria-label="volume"><span>VOL</span></div>
 </div>
 <div id="nogl">night rider needs WebGL for its freeway.</div>
 
@@ -364,9 +380,13 @@ function makeEngine(ctx){
     n.connect(bp); bp.connect(g); g.connect(drums); send(g, verbSend, 0.4);
   }
   function setCutoff(hz){ lpf.frequency.setTargetAtTime(hz, ctx.currentTime, 0.08); }
-  function setMuted(m){ master.gain.setTargetAtTime(m ? 0 : 0.82, ctx.currentTime, 0.03); }
+  // the volume knob: 0..1, squared so the bottom half of the slider is useful
+  let level = 0.82, muted = false;
+  const applyLevel = () => master.gain.setTargetAtTime(muted ? 0 : level, ctx.currentTime, 0.03);
+  function setMuted(m){ muted = m; applyLevel(); }
+  function setVolume(v){ level = 0.82 * v * v; applyLevel(); }
 
-  return { ctx, kick, snare, hat, cym, bass, arp, pad, leadNote, tapNote, crash, whoosh, doppler, riser, setCutoff, setMuted, analyser, master, lpf };
+  return { ctx, kick, snare, hat, cym, bass, arp, pad, leadNote, tapNote, crash, whoosh, doppler, riser, setCutoff, setMuted, setVolume, analyser, master, lpf };
 }
 
 // The arrangement. One chord per bar, four bars per progression. Every 32
@@ -419,11 +439,12 @@ function makeSequencer(eng, api){
 
 const S = {
   lane: 0, px: LANE_X[0], pxPrev: LANE_X[0], roll: 0, tw: null,
-  I: I0, streak: 0, best: 0, passes: 0, crashes: 0, taps: 0, muted: false, started: false, paused: false,
+  I: I0, streak: 0, best: 0, passes: 0, crashes: 0, taps: 0, muted: false, vol: 1, started: false, paused: false,
   prog: 0, layers: { drums: true, bass: true, arp: true, pad: true },
   shake: 0, glitch: 0, flash: 0, pulse: 0, pulseCol: new THREE.Color(1, 1, 1), sunPulse: 0,
 };
 try { S.best = parseInt(localStorage.getItem('nightrider.best') || '0', 10) || 0; } catch(e){}
+try { const v = parseFloat(localStorage.getItem('nightrider.vol')); if (!isNaN(v)) S.vol = clamp(v, 0, 1); } catch(e){}
 
 let ctx = null, eng = null, seq = null, tOff = 0, perf0 = performance.now();
 let nextStep = 0, drumMutedUntil = 0, seqTimer = 0;
@@ -871,6 +892,17 @@ for (const b of document.querySelectorAll('.tg')) b.addEventListener('click', ()
   const k = b.dataset.layer; S.layers[k] = !S.layers[k]; b.classList.toggle('on', S.layers[k]); b.blur(); });
 progBtn.addEventListener('click', () => { setProg((S.prog + 1) % PROGS.length); progBtn.blur(); });
 function setProg(i){ S.prog = i; progBtn.textContent = PROGS[i].name; for (const c of cars) if (!c.passed && !c.crashed) setCarNote(c); }
+const volEl = $('vols');
+function setVolume(v){
+  S.vol = clamp(v, 0, 1); volEl.style.setProperty('--p', Math.round(S.vol * 100) + '%');
+  if (+volEl.value !== Math.round(S.vol * 100)) volEl.value = Math.round(S.vol * 100);
+  if (S.muted){ S.muted = false; if (eng) eng.setMuted(false); }   // touching the knob unmutes
+  if (eng) eng.setVolume(S.vol);
+  try { localStorage.setItem('nightrider.vol', String(S.vol)); } catch(e){}
+}
+volEl.value = Math.round(S.vol * 100); volEl.style.setProperty('--p', Math.round(S.vol * 100) + '%');
+volEl.addEventListener('input', () => setVolume(volEl.value / 100));
+volEl.addEventListener('pointerup', () => volEl.blur());
 
 const vctx = vbc.getContext('2d'); const vbLevels = [0, 0, 0]; const fftBuf = new Uint8Array(128);
 function drawVoiceBox(){
@@ -896,6 +928,7 @@ function start(){
   if (S.started) return;
   const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
   ctx = new AC(); eng = makeEngine(ctx);
+  eng.setVolume(S.vol); if (S.muted) eng.setMuted(true);
   const Tpre = (performance.now() - perf0) / 1000;
   tOff = Tpre - ctx.currentTime; S.started = true;
   seq = makeSequencer(eng, { chordAt, intensity: () => S.I, layers: S.layers, rng, drumMutedUntil: () => drumMutedUntil, tOff: () => tOff });
@@ -959,6 +992,7 @@ function doCrash(c){
 
 addEventListener('keydown', e => {
   if (e.repeat) return;
+  if (e.target === volEl) return;                                          // a focused volume slider owns its keys
   if (e.key === ' ' && e.target && e.target.tagName === 'BUTTON') return;   // a focused dashboard button owns Space
   if (e.key === ' ' || e.key === 'p' || e.key === 'P' || e.key === 'Escape'){ if (S.started) setPaused(!S.paused); else start(); e.preventDefault(); return; }
   if (!S.started){ start(); }
@@ -1111,7 +1145,7 @@ window.nr = {
   S, cars, oncoming, PROGS, KEY, BPM, SPEED, REL, ONC_V, LANE_X, ONC_X,
   get T(){ return T; }, get frames(){ return frames; }, get fpsEMA(){ return fpsEMA; }, get resScale(){ return resScale; },
   get ctx(){ return ctx; }, get eng(){ return eng; }, get seed(){ return seed; }, get nextStep(){ return nextStep; },
-  start, steer, tapAt, setProg, setPaused, makeEngine, makeSequencer, chordAt, ensureTraffic, ready: true,
+  start, steer, tapAt, setProg, setPaused, setVolume, makeEngine, makeSequencer, chordAt, ensureTraffic, ready: true,
 };
 </script>
 </body>
