@@ -455,10 +455,20 @@ const chordAt = bar => PROGS[S.prog].chords[((bar % 4) + 4) % 4];
 
 const cars = [], oncoming = [];
 let genBar = -1, bar0 = 0, motif = MOTIFS[0], motifK = 0, phrase = PH.intro[0];
-const ONC_P = [[], [0], [8], [0, 8], [4], [12], [2, 10], [0, 6], [0, 8, 12]];
+// Traffic weather. Density breathes with the 32-bar cycle — a surge lands on
+// the drop, a breather opens mid-cycle, the lane clears under the build — and
+// each cycle draws its own temperature, so whole cycles run calm or hot.
+let heat = 1, heatCyc = -1;
+function demandAt(bar){
+  const cyc = Math.floor(bar / 32);
+  if (cyc !== heatCyc){ heatCyc = cyc; heat = 0.4 + rng() * 0.6; }
+  const b = bar % 32;
+  return heat * (b < 8 ? 1 : b < 16 ? 0.6 : b < 24 ? 0.25 : b < 28 ? 0.6 : 0.1);
+}
+const ONC_P = [[], [0], [8], [0, 8], [4], [12], [2, 10], [0, 6], [0, 8, 12]];   // roughly sparse → dense
 function genOncomingBar(bar){
   if (bar - bar0 < 3) return;                                  // 270 m at closing speed is about three bars
-  for (const s of ONC_P[Math.floor(rng() * ONC_P.length)]){ const step = bar * 16 + s;
+  for (const s of ONC_P[Math.floor(rng() * (3 + Math.round(demandAt(bar) * 6)))]){ const step = bar * 16 + s;
     oncoming.push({ step, arrT: step * STEP, passed: false, done: false, z: -1e9 }); }
 }
 function setCarNote(c){
@@ -470,13 +480,14 @@ function setCarNote(c){
 function genTrafficBar(bar){
   genOncomingBar(bar);
   const rel = bar - bar0; if (rel < 6) return;               // the first car needs 15 s to arrive from the fog
-  const p = Math.floor((rel - 6) / 4), i = (rel - 6) & 3;
-  if (i === 0){
-    const pool = p < 3 ? PH.intro : p < 7 ? (rng() < 0.3 ? PH.intro : PH.mid) : (rng() < 0.45 ? PH.mid : PH.hot);
+  if ((bar & 3) === 0){
+    // phrases sit on the chord cycle, so a hot phrase's wall arrives with the drop
+    const d = Math.min(1, (rel - 6) / 24) * demandAt(bar) + (rng() - 0.5) * 0.12;
+    const pool = d < 0.34 ? PH.intro : d < 0.62 ? PH.mid : PH.hot;
     phrase = pool[Math.floor(rng() * pool.length)];
-    if ((p & 1) === 0){ motif = MOTIFS[Math.floor(rng() * MOTIFS.length)]; motifK = 0; }
+    if ((bar & 4) === 0){ motif = MOTIFS[Math.floor(rng() * MOTIFS.length)]; motifK = 0; }
   }
-  for (const s of phrase[i]){
+  for (const s of phrase[bar & 3]){
     const ti = motif[motifK++ % motif.length], step = bar * 16 + s;
     const c = { bar, ti, step, arrT: step * STEP, midi: 0, hue: 0, col: new THREE.Color(), dare: undefined,
       passed: false, crashed: false, crashT: 0, flash: -9, done: false, z: -1e9 };
